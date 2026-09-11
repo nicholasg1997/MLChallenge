@@ -199,10 +199,13 @@ import sys
 from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "src"))
 
-from meld_emotion.config import RAW_EXTRACTED_DIR, FACE_DETECTOR_MODEL_PATH as FACE_MODEL_PATH, SPLIT_DIRS
+from meld_emotion.config import (
+    LABELS_DIR, RAW_EXTRACTED_DIR, FACE_DETECTOR_MODEL_PATH as FACE_MODEL_PATH, SPLIT_DIRS,
+)
 ```
 
-Remove the old lines:
+Remove the old lines entirely — `config.py` already defines all of these
+identically, so nothing should be recomputed locally in the script:
 ```python
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LABELS_DIR = REPO_ROOT / "data" / "meld" / "labels"
@@ -210,10 +213,6 @@ RAW_EXTRACTED_DIR = REPO_ROOT / "data" / "meld" / "raw" / "extracted"
 FACE_MODEL_PATH = REPO_ROOT / "models" / "face_detection_yunet_2023mar.onnx"
 SPLIT_DIRS = { ... }
 ```
-
-Keep `LABELS_DIR = REPO_ROOT / "data" / "meld" / "labels"` for now (it moves
-to the new `labels.py` module in Task 2) — just change its `REPO_ROOT` to
-`from meld_emotion.config import REPO_ROOT`.
 
 - [ ] **Step 8: Verify the viewer script still parses and runs `--help` cleanly**
 
