@@ -68,21 +68,35 @@ comes in, the robot reacts."
 | Component | Role | Params | Trained? |
 |---|---|---|---|
 | Text encoder (RoBERTa-base class) | Encode utterance text | ~125M | Fine-tuned (partial freeze) |
-| Face/expression encoder (ViT-Base, e.g. dima806/facial_emotions_image_detection) | Encode each face crop *and* the global frame | ~86M | Fine-tuned (partial freeze) |
+| Face/expression encoder (ViT-Base, dima806/facial_emotions_image_detection) | Encode each detected face crop | ~86M | Fine-tuned (partial freeze) |
+| Global scene encoder (CLIP ViT-B/32 image encoder) | Encode the full frame (context: setting, hands, number of people, activity) | ~88M | Frozen — general-purpose features are the point; not adapted |
+| Modality projectors (linear layers into the fusion transformer's embedding space) | Map face-encoder and scene-encoder outputs into a shared space | ~1-2M | Trained from scratch |
 | Face detector (OpenCV YuNet) | Locate faces per sampled frame | ~1M | Not trained (zero-shot) |
-| Face tracker | Assign per-clip track IDs across frames | 0 (pure geometry) | N/A |
+| Face tracker | Assign per-clip track IDs across frames, with shot-cut reset + appearance-gated matching | 0 (pure geometry + reused embeddings) | N/A |
 | Fusion transformer (2-4 layers, cross-attention) | Let text and visual tokens attend to each other | ~10-25M | Trained from scratch |
 | Emotion classifier head | 7-way softmax on fused representation | <1M | Trained from scratch |
 | Response LM (small instruction-tuned model, ~3-4B) | Generate short grounded response text | ~3-4B | Prompted, not fine-tuned initially |
 | ASR (Whisper-base, live demo only) | Speech-to-text for the live webcam path | ~74M | Not trained (zero-shot) |
 
-**Estimated total: ~3.3-4.3B parameters**, depending on the final response-LM
+**Estimated total: ~3.4-4.4B parameters**, depending on the final response-LM
 size chosen after empirical latency testing — comfortably under the 6B
 ceiling, with meaningful headroom remaining. ASR is included in this count
 whenever the live demo path is active, since it's a required component of
 that inference path per the assignment's counting rule; it is not part of
 the replay-path count (MELD provides ground-truth text directly, no ASR
 needed).
+
+The face/expression encoder and the scene encoder are deliberately different
+models, not the same backbone applied twice. dima806 is fine-tuned
+specifically to read expressions from cropped, face-dominated images — its
+training never had reason to learn about hands, room settings, or group
+composition, since none of that was relevant to its task. Asking it to also
+encode whole busy scenes would mean relying on a narrow specialist outside
+its competence. CLIP's image encoder, trained on a large and diverse
+image-caption corpus, is suited to exactly the general scene understanding
+the global token is meant to provide. It doesn't need to know anything about
+*emotion* — that inference happens in the fusion transformer, which combines
+this general context with the expression-specific face tokens and the text.
 
 Sizing principle: **the ceiling is a constraint, not a target.** The
 component that actually decides where extra parameters help is *how many
@@ -111,20 +125,39 @@ times it runs per turn*, not the raw budget headroom:
    multi-person scenes. No fixed heuristic (largest face, most-central face)
    survives this variety.
 2. Encode **every** detected face crop through the face/expression encoder.
-3. **Also** encode the full frame through the same encoder, unconditionally
-   — not only as a fallback when zero faces are detected. This means a face
-   the detector misses isn't a total loss of signal; the global embedding
-   still carries some information (position, posture, partial profile) even
-   when no clean crop exists for that person.
+3. **Also** encode the full frame through the separate, frozen scene encoder
+   (§4.1), unconditionally — not only as a fallback when zero faces are
+   detected. This means a face the detector misses isn't a total loss of
+   signal; the global embedding still carries some information (position,
+   posture, partial profile, surrounding context) even when no clean face
+   crop exists for that person.
 4. A lightweight frame-to-frame tracker (IoU/centroid matching, tolerant of
    one missed frame before dropping a track) assigns a per-clip track ID to
-   each face. Every face token gets a track-ID embedding *and* a
-   frame-position embedding, giving the fusion transformer an explicit
-   "same person over time" signal rather than requiring it to infer
-   continuity purely from visual similarity. This is intentionally simple —
-   pure geometry, no pretrained model, no audio — and approximate: at ~3fps
-   sampling, people move more between samples than in a dense stream, so
-   track continuity is a soft inductive bias, not ground truth identity.
+   each face, giving the fusion transformer an explicit "same person over
+   time" signal rather than requiring it to infer continuity purely from
+   visual similarity. This is intentionally simple — pure geometry, no
+   pretrained model, no audio.
+
+   **Known failure mode, and its mitigation**: a hard camera cut (common in
+   multi-camera sitcom editing, plausibly within a single ~3s utterance) can
+   place a different person's face in the same screen position as the
+   previous shot, causing a naive position-only tracker to wrongly link them
+   under one track ID. Two cheap, classical-CV additions address this: (a)
+   shot-boundary detection (frame-to-frame histogram/pixel-difference
+   thresholding) hard-resets all tracks at a detected cut, and (b)
+   appearance-gated matching reuses the face-crop embeddings we're already
+   computing for classification to reject a position-based match whose
+   content clearly isn't the same person, even absent a detected cut. Neither
+   adds a new pretrained model or meaningfully more compute. Even
+   unmitigated, a wrong track-ID corrupts only the continuity signal, not the
+   per-frame content encoding (the vision encoder still correctly reads
+   whichever face is actually in a given crop) — since the classification
+   target is one label per utterance rather than a per-person trajectory, the
+   model doesn't strictly depend on perfect continuity to work. Whether the
+   track-ID embedding nets positive is treated as an empirical question: a
+   planned ablation (train with/without it, and specifically compare
+   performance on clips known to contain cuts) rather than an assumed
+   improvement (see §11).
 5. All tokens (text tokens + all face tokens across all sampled frames + one
    global-frame token per sampled frame) feed the fusion transformer as one
    variable-length set with modality-type, frame-position, and track-ID
@@ -240,7 +273,7 @@ Two paths, sharing one inference core:
 - Development machine: 16GB M1 MacBook.
 - MELD.Raw extracted footprint: ~20GB disk (10.1GB compressed download,
   deleted after verified extraction).
-- Estimated total inference-path parameters: ~3.3-4.3B (see §4.1), under the
+- Estimated total inference-path parameters: ~3.4-4.4B (see §4.1), under the
   6B ceiling.
 - Actual measured training wall-clock time and peak memory usage will be
   reported once implemented, not estimated in advance.
@@ -249,7 +282,8 @@ Two paths, sharing one inference core:
 
 Reused pretrained, not trained by us:
 - Text encoder backbone (RoBERTa-base class)
-- Face/expression encoder backbone (ViT-Base, e.g. dima806/facial_emotions_image_detection)
+- Face/expression encoder backbone (ViT-Base, dima806/facial_emotions_image_detection)
+- Global scene encoder (CLIP ViT-B/32 image encoder) — used fully frozen
 - Face detector (OpenCV YuNet)
 - ASR (Whisper-base)
 - Response LM (small instruction-tuned model)
@@ -257,6 +291,7 @@ Reused pretrained, not trained by us:
 Trained by us, from scratch or fine-tuned:
 - Cross-attention fusion transformer (from scratch)
 - Emotion classifier head (from scratch)
+- Modality projectors for the face and scene encoders (from scratch)
 - Top layers/adapters of the text and face encoders (fine-tuned)
 
 ## 11. Known limitations
@@ -269,7 +304,10 @@ Trained by us, from scratch or fine-tuned:
   token is a mitigation, not a guarantee, and mitigates rather than
   measures the residual risk.
 - Face tracking is approximate at ~3fps sampling, not frame-perfect
-  identity.
+  identity. Hard camera cuts can still corrupt the track-ID continuity
+  signal even with shot-boundary detection and appearance-gating (§4.2);
+  whether the track-ID embedding nets positive at all is an open empirical
+  question, planned as an ablation rather than assumed.
 - The 0.75 confidence threshold trades some real secondary detections for
   fewer false positives (§4.2) — a deliberate, not free, choice.
 - MPS acceleration coverage on Apple Silicon is incomplete; some training
