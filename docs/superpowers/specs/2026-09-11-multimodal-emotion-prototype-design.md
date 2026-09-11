@@ -1,332 +1,590 @@
 # Real-Time Multimodal Emotion Prototype — Design
 
-**Date:** 2026-09-11
+**Date:** 2026-09-11 (revised)
 **Track:** Text + Vision
-**Timeline:** weekend-scale
+**Status:** Design accepted — next step is the implementation plan
 
 ## 1. Problem framing
 
 We're building a small end-to-end prototype for emotion-aware interaction with a
 character robot: combine an utterance's text with the speaker's facial
-expression, produce a structured emotion tag plus a short grounded response,
-and do it in a way that's usable as a live, ongoing interaction rather than a
-one-shot batch classification.
+expression, produce a structured emotion state plus a short grounded response,
+and do it as a live, ongoing interaction rather than a one-shot batch
+classification.
+
+The assignment asks for exactly two outputs per turn, and this design maps to
+them directly:
+
+1. **Structured state/tags containing a MELD emotion category** — §4.3 (the
+   predictor) and §4.5 (the state schema).
+2. **Short response text grounded in the multimodal input** — §4.4.
 
 MELD (Multimodal EmotionLines Dataset) is the shared foundation: ~13,700
 utterances across 1,433 dialogues from *Friends*, each labeled with one of 7
-emotions (anger, disgust, fear, joy, neutral, sadness, surprise) plus
-sentiment, and each utterance packaged as a short video clip with synced
-audio and a transcript line.
+emotions (anger, disgust, fear, joy, neutral, sadness, surprise) plus a 3-way
+sentiment, and each utterance packaged as a short video clip with synced audio
+and a transcript line.
 
 ## 2. Real-time definition
 
 A **turn** is one utterance: a few seconds of video arriving together with a
 line of text (MELD's own unit — verified average clip length 3.1s, average
-utterance length 7.9 words). "Real-time" means:
+utterance length 7.9 words). A turn ends when the clip ends (replay) or when
+voice-activity detection sees end-of-speech (live).
 
-- Processing starts as soon as a turn's input starts arriving — frames are
-  consumed incrementally as the clip/stream plays, not after the whole clip
-  has finished.
-- The system emits an emotion tag + response text within roughly **1-2
-  seconds of the turn ending.**
+"Real-time" here means voice-assistant-grade turn responsiveness, not
+animation-loop timing — nothing at this model scale on a laptop could honestly
+promise sub-100ms, and the assignment doesn't require it. Concretely:
 
-This is deliberately not sub-100ms animation-loop timing — nothing at this
-model scale on a laptop CPU/MPS setup could honestly promise that, and the
-assignment doesn't require it. 1-2s matches the responsiveness of a
-voice-assistant-style interaction, which is the right bar for "an utterance
-comes in, the robot reacts."
+**During the turn — input is consumed as it arrives.**
+- Frames are sampled at ~3fps and pushed through the vision pipeline (§4.2)
+  as they arrive, not after the clip finishes. By end-of-turn, all vision
+  work for the turn is already done.
+- A **provisional expression state** is published after every sampled frame:
+  the face/expression encoder's own 7-way softmax, averaged over detected
+  faces and smoothed across frames. It costs nothing (that head is part of the
+  encoder we run anyway) and it is what makes "accept input over time" visibly
+  true — the state moves while the person is still talking.
+
+**At end of turn — three events, each with a latency target.**
+
+| Event | Target (replay) | Target (live) |
+|---|---|---|
+| Final fused emotion + sentiment state (§4.5) | ≤100 ms | ≤500 ms (includes ASR) |
+| First response token | ≤1.0 s | ≤1.0 s after the state |
+| Response complete (streamed) | ≤2.5 s | ≤2.5 s after the state |
+
+The state and the response are deliberately **separate events**. The response
+LM is the slowest component by an order of magnitude; if it gated the state,
+the robot couldn't react (face, posture, LEDs) until it was ready to speak.
+Splitting them is both the honest latency story and the better interaction.
+
+Everything runs on-device (16GB M1 MacBook); no remote inference. These are
+targets, not claims — measured p50/p95 per event on both paths is a required
+deliverable (§9).
 
 ## 3. Scope
 
 **In scope:**
-- Text + vision fusion producing a 7-way emotion tag (+ probability
-  distribution) and a short grounded response.
-- Two demo paths sharing one inference core (see §7).
-- Full training/evaluation pipeline against MELD, with results reported
-  against published baselines.
+- Text + vision fusion producing a 7-way emotion distribution and a 3-way
+  sentiment distribution per turn (§4.3), plus a provisional vision-only
+  expression state during the turn (§2).
+- A short grounded response per turn from a local LM, streamed (§4.4).
+- Two demo paths sharing one inference core (§8).
+- Full training/evaluation pipeline against MELD with ablations, reported
+  against published baselines (§6, §7).
+- Measured latency and resource requirements (§9).
 - This document's evidence, trade-offs, and limitations.
 
 **Explicitly out of scope for this submission:**
 - The tri-modal (+voice-as-a-fusion-input) extension and reinforcement
-  learning — deliberately deferred per the assignment's own "core first"
-  guidance. The fusion module's design (a variable-size token set with
-  modality-type embeddings) would allow a third modality to be added later
-  without a redesign, but it is not built or evaluated here.
-- Identity-based face recognition (e.g., matching detected faces to named
-  speakers) — MELD's speaker field is not a closed set (guest/one-off
-  characters appear alongside the main cast), so identity enrollment
-  doesn't generalize, and the detection+attention approach below doesn't
-  need it.
-- Audio-visual active speaker detection (lip-sync matching) — real signal,
-  but a research problem in its own right; superseded by the
-  detection+attention+tracking approach in §5.
+  learning — deferred per the assignment's "core first" guidance. The fusion
+  module (a variable-size token set with modality-type embeddings, §4.3) would
+  admit a third modality without redesign, but it is not built or evaluated.
+- Identity-based face recognition. MELD's `Speaker` field is not a closed set
+  (guest/one-off characters appear alongside the main cast), so identity
+  enrollment doesn't generalize, and the detect-everything + attention
+  approach in §4.2 doesn't need it.
+- Audio-visual active speaker detection (lip-sync matching) — a research
+  problem in its own right; superseded by detection + attention.
+
+**Build priority (what gets cut first if time runs short):**
+1. Data layer, preprocessing, feature cache, text(+context) baseline.
+2. Fusion model, Stage 1 training, ablation table, batch eval — the
+   submittable core.
+3. Response LM, visual gloss, replay demo, latency measurement.
+4. Live path.
+5. Stage 2 training on Modal — only once Stage 1 has produced a strong
+   benchmark.
+6. Stretch: appearance-gated tracking and the ±track-ID ablation,
+   RoBERTa-large, other-show clips.
+
+Cut order is the reverse: 6 first, then Stage 2, then the live path degrades
+from VAD to push-to-talk.
 
 ## 4. Architecture
 
-### 4.1 Components
+### 4.1 Components and parameter budget
 
 | Component | Role | Params | Trained? |
 |---|---|---|---|
-| Text encoder (RoBERTa-base class) | Encode utterance text | ~125M | Fine-tuned (partial freeze) |
-| Face/expression encoder (ViT-Base, dima806/facial_emotions_image_detection) | Encode each detected face crop | ~86M | Fine-tuned (partial freeze) |
-| Global scene encoder (CLIP ViT-B/32 image encoder) | Encode the full frame (context: setting, hands, number of people, activity) | ~88M | Frozen — general-purpose features are the point; not adapted |
-| Modality projectors (linear layers into the fusion transformer's embedding space) | Map face-encoder and scene-encoder outputs into a shared space | ~1-2M | Trained from scratch |
-| Face detector (OpenCV YuNet) | Locate faces per sampled frame | ~1M | Not trained (zero-shot) |
-| Face tracker | Assign per-clip track IDs across frames, with shot-cut reset + appearance-gated matching | 0 (pure geometry + reused embeddings) | N/A |
-| Fusion transformer (2-4 layers, cross-attention) | Let text and visual tokens attend to each other | ~10-25M | Trained from scratch |
-| Emotion classifier head | 7-way softmax on fused representation | <1M | Trained from scratch |
-| Response LM (small instruction-tuned model, ~3-4B) | Generate short grounded response text | ~3-4B | Prompted, not fine-tuned initially |
-| ASR (Whisper-base, live demo only) | Speech-to-text for the live webcam path | ~74M | Not trained (zero-shot) |
+| Text encoder — RoBERTa-base | Encode current utterance + previous *k* utterances (§4.3) | ~125M | Fine-tuned, top half of layers (Stage 1) |
+| Face/expression encoder — ViT-Base (`dima806/facial_emotions_image_detection`) | Encode each detected face crop. Its own 7-way head also provides the provisional state (§2), the zero-training vision-only baseline (§7), and per-face labels for the gloss (§4.4) | ~86M | Frozen (Stage 1); top 4 layers unfrozen (Stage 2, §6) |
+| Scene encoder — CLIP ViT-B/32 image tower | Encode the letterboxed full frame: setting, hands, number of people, activity | ~88M | Frozen |
+| CLIP text tower | Encodes the fixed visual-gloss prompt bank (§4.4). Computed once and cached, but counted: the gloss requires it | ~63M | Frozen |
+| Modality projectors | Linear maps from face (768-d), scene (512-d) features into the fusion width | ~1M | From scratch |
+| Face detector — OpenCV YuNet | Locate faces per sampled frame | ~75K | Zero-shot |
+| Face tracker | Per-turn track IDs: IoU matching + shot-cut reset | 0 (geometry) | N/A |
+| Fusion transformer — single-stream, 2–4 layers, d=768 | Joint self-attention over text + face + scene tokens | ~15–30M | From scratch |
+| Emotion head (7-way) + sentiment head (3-way) | Linear heads on the fused token | <1M | From scratch |
+| Response LM — ~3–4B instruction-tuned, 4-bit via MLX | Short grounded response, streamed | ~3–4B | Prompted, not fine-tuned |
+| VAD — webrtcvad (live only) | End-of-turn detection | 0 (non-learned) | N/A |
+| ASR — Whisper-base (live only) | Speech-to-text for the live path | ~74M | Zero-shot |
 
-**Estimated total: ~3.4-4.4B parameters**, depending on the final response-LM
-size chosen after empirical latency testing — comfortably under the 6B
-ceiling, with meaningful headroom remaining. ASR is included in this count
-whenever the live demo path is active, since it's a required component of
-that inference path per the assignment's counting rule; it is not part of
-the replay-path count (MELD provides ground-truth text directly, no ASR
-needed).
+**Total: ~3.4–4.4B on the replay path, ~3.5–4.5B on the live path** (ASR is
+required on that path, so it's counted there; MELD supplies ground-truth text
+on replay). Comfortably under the 6B ceiling. The exact figure is fixed once
+the LM is chosen.
 
-The face/expression encoder and the scene encoder are deliberately different
-models, not the same backbone applied twice. dima806 is fine-tuned
-specifically to read expressions from cropped, face-dominated images — its
-training never had reason to learn about hands, room settings, or group
-composition, since none of that was relevant to its task. Asking it to also
-encode whole busy scenes would mean relying on a narrow specialist outside
-its competence. CLIP's image encoder, trained on a large and diverse
-image-caption corpus, is suited to exactly the general scene understanding
-the global token is meant to provide. It doesn't need to know anything about
-*emotion* — that inference happens in the fusion transformer, which combines
-this general context with the expression-specific face tokens and the text.
+**Response LM selection rule.** Candidates are ~3–4B instruction-tuned models
+with permissive licenses (Qwen3-4B / Qwen2.5-3B / Phi-3.5-mini class), with a
+~1.5–2B model of the same family as the latency fallback. The choice is made
+by a short measured test on the M1: prefill + decode speed at 4-bit via
+`mlx-lm`, with any "thinking" mode disabled. The largest candidate that meets
+the §2 targets wins. Quantization is the lever for capability within the
+latency budget; it does not change the counted parameter total.
 
-Sizing principle: **the ceiling is a constraint, not a target.** The
-component that actually decides where extra parameters help is *how many
-times it runs per turn*, not the raw budget headroom:
-- The response LM and text encoder each run **once** per turn, so upsizing
-  them is cheap in latency terms — the response LM is where we've
-  deliberately spent the most headroom, since its output quality is directly
-  visible and evaluable.
-- The face/expression encoder runs **once per detected face, per sampled
-  frame** — potentially 15-25 forward passes in a single turn. This is
-  intentionally kept small; upsizing it would have an outsized, multiplicative
-  latency cost for comparatively little benefit.
-- The fusion transformer is trained from scratch and deliberately small
-  regardless of budget: its job is cheap fusion over already-good pretrained
-  representations, not representation learning, and a larger from-scratch
-  transformer would just be harder to optimize on ~10K training examples.
-- Quantization (4-bit/8-bit, e.g. via MLX) is the intended lever for getting
-  more real capability out of the response LM within a given latency/memory
-  budget, without changing its counted parameter total.
+**Why two vision encoders.** `dima806` is fine-tuned to read expressions from
+cropped, face-dominated images; nothing in its training rewarded learning
+about hands, room settings, or group composition. Asking it to also encode
+whole busy scenes would be relying on a narrow specialist outside its
+competence. CLIP's image tower, trained on a large diverse image–caption
+corpus, is suited to exactly the general scene context the global token is
+for. It doesn't need to know about emotion — that inference happens in the
+fusion transformer, which combines general context with expression-specific
+face tokens and the text.
 
-### 4.2 Vision pipeline (per sampled frame, ~3fps within a clip)
+**Sizing principle: the ceiling is a constraint, not a target.** What decides
+where parameters help is *how many times a component runs per turn*:
+- The response LM and text encoder run **once** per turn — upsizing them is
+  cheap in latency terms. The LM is where the most headroom is spent, since
+  its output quality is directly visible and evaluable.
+- The face encoder runs **once per detected face, per sampled frame** —
+  potentially 15–25 forward passes in a turn. It is kept at ViT-Base
+  deliberately; upsizing it has a multiplicative latency cost.
+- The fusion transformer is small regardless of budget: its job is cheap
+  fusion over already-good pretrained representations, not representation
+  learning, and a larger from-scratch transformer is just harder to optimize
+  on ~10K examples.
 
-1. Run the face detector on the frame. MELD's raw footage is uncontrolled TV
-   video — confirmed directly by inspection (see §6) to range from clean
-   single-subject shots to 7-person ensembles to dark, partially-occluded
-   multi-person scenes. No fixed heuristic (largest face, most-central face)
-   survives this variety.
-2. Encode **every** detected face crop through the face/expression encoder.
-3. **Also** encode the full frame through the separate, frozen scene encoder
-   (§4.1), unconditionally — not only as a fallback when zero faces are
-   detected. This means a face the detector misses isn't a total loss of
-   signal; the global embedding still carries some information (position,
-   posture, partial profile, surrounding context) even when no clean face
-   crop exists for that person.
-4. A lightweight frame-to-frame tracker (IoU/centroid matching, tolerant of
-   one missed frame before dropping a track) assigns a per-clip track ID to
-   each face, giving the fusion transformer an explicit "same person over
-   time" signal rather than requiring it to infer continuity purely from
-   visual similarity. This is intentionally simple — pure geometry, no
-   pretrained model, no audio.
+### 4.2 Vision pipeline (per sampled frame, ~3fps)
 
-   **Known failure mode, and its mitigation**: a hard camera cut (common in
-   multi-camera sitcom editing, plausibly within a single ~3s utterance) can
-   place a different person's face in the same screen position as the
-   previous shot, causing a naive position-only tracker to wrongly link them
-   under one track ID. Two cheap, classical-CV additions address this: (a)
-   shot-boundary detection (frame-to-frame histogram/pixel-difference
-   thresholding) hard-resets all tracks at a detected cut, and (b)
-   appearance-gated matching reuses the face-crop embeddings we're already
-   computing for classification to reject a position-based match whose
-   content clearly isn't the same person, even absent a detected cut. Neither
-   adds a new pretrained model or meaningfully more compute. Even
-   unmitigated, a wrong track-ID corrupts only the continuity signal, not the
-   per-frame content encoding (the vision encoder still correctly reads
-   whichever face is actually in a given crop) — since the classification
-   target is one label per utterance rather than a per-person trajectory, the
-   model doesn't strictly depend on perfect continuity to work. Whether the
-   track-ID embedding nets positive is treated as an empirical question: a
-   planned ablation (train with/without it, and specifically compare
-   performance on clips known to contain cuts) rather than an assumed
-   improvement (see §11).
-5. All tokens (text tokens + all face tokens across all sampled frames + one
-   global-frame token per sampled frame) feed the fusion transformer as one
-   variable-length set with modality-type, frame-position, and track-ID
-   embeddings. The architecture is inherently permutation-invariant/set-based
-   — a frame with 0 faces, 1 face, or 5 faces (some of them false positives)
-   is the expected input shape, not an edge case requiring special handling.
+MELD's raw footage is uncontrolled TV video — confirmed by inspection (§5) to
+range from clean single-subject shots to 7-person ensembles to dark,
+partially-occluded multi-person scenes. No fixed heuristic (largest face,
+most-central face) survives this variety, so the pipeline detects everything
+and lets attention sort it out.
 
-Detector confidence is thresholded at 0.75 (tuned empirically against
-visible false positives during data exploration — see §6). This trades away
-some real, low-confidence secondary detections (partially visible or
-blurred background faces) along with false positives, but pairs well with
-the always-on global-frame token, which softly absorbs whatever context the
-stricter face detector no longer commits to.
+1. **Detect** faces on the full-resolution frame (YuNet, confidence ≥ 0.75).
+2. **Encode every face crop** (with a ~20% margin, resized to 224²) through the
+   face/expression encoder → one pooled 768-d token per face, plus that
+   model's own 7-way softmax (used for the provisional state and the gloss,
+   never as classifier input).
+3. **Encode the full frame** through the frozen scene encoder,
+   **unconditionally** — not only when zero faces are found. A face the
+   detector misses is therefore not a total loss of signal; the scene token
+   still carries posture, position, partial profile, and context. The frame
+   is **letterboxed** to 224², not center-cropped: a 16:9 center-crop
+   discards ~44% of the width, and faces at the frame edges are a verified
+   edge case (§5).
+4. **Track** faces frame-to-frame with IoU matching (tolerating one missed
+   frame before a track drops), assigning a per-turn track ID so the fusion
+   transformer gets an explicit "same person over time" signal. A **shot-cut
+   detector** (HSV-histogram difference between consecutive sampled frames
+   above a threshold) hard-resets all tracks, so a multi-camera cut that puts
+   a different face in the same screen position doesn't get linked under one
+   ID. Appearance-gated matching (rejecting a positional match whose face
+   embedding clearly differs) is a stretch addition. Even a wrong track ID
+   corrupts only the continuity signal — the per-frame content encoding is
+   still correct for whichever face is actually in the crop — and since the
+   target is one label per turn, the model doesn't depend on perfect
+   continuity. Whether the track-ID embedding helps at all is an ablation
+   (§7), not an assumption.
+5. **Emit tokens.** Each sampled frame contributes its face tokens and one
+   scene token to the turn's variable-length token set (§4.3), each carrying
+   a modality-type embedding, a frame-position embedding (sampled-frame index
+   within the turn, capped at 32), and — for face tokens — a track-ID
+   embedding. A frame with 0, 1, or 5 faces (some false positives) is the
+   expected input shape, not an edge case.
 
-### 4.3 Output heads
+The 0.75 detector threshold was tuned against visible false positives during
+exploration (§5). It trades some real low-confidence secondary detections
+(blurred or partial background faces) for fewer false positives, and pairs
+with the always-on scene token, which softly absorbs whatever context the
+stricter detector no longer commits to.
 
-- **Emotion tag**: a linear classifier head on the fused representation,
-  trained with **class-weighted cross-entropy** (train-split distribution is
-  47.2% neutral down to 2.7% fear/disgust — verified directly, see §6),
-  evaluated on **macro-F1 and weighted-F1** against the held-out test split,
-  not raw accuracy (which would be misleadingly inflated by the imbalance).
-  This head outputs a full probability distribution over all 7 emotions, not
-  just a top-1 label — richer structured state for a downstream consumer to
-  react to.
-- **Response text**: a separate, small pretrained instruction-tuned LM,
-  prompted (not fine-tuned initially) with the utterance text, the
-  classifier's predicted emotion label/distribution, and optionally a short
-  textual gloss of salient visual cues. Kept deliberately separate from the
-  classifier: discriminative prediction gets a trained head (sample-efficient,
-  fast, evaluable), generative response text gets the LM (its actual
-  strength). By the time the LM runs, the hard cross-modal reasoning is
-  already done, so its job is simplified to producing a short, in-character
-  reactive line given an already-determined emotional context.
+### 4.3 Fusion and prediction
 
-## 5. Data pipeline & verified edge cases
+**Text input with dialogue context.** The text encoder sees the previous *k*
+utterances of the same dialogue followed by the current one:
 
-Verified directly against the real MELD.Raw archive (not assumed from
-documentation):
+```
+<s> u[t-k] </s> ... </s> u[t-1] </s></s> u[t] </s>
+```
 
-- Train/dev/test: 9,989 / 1,109 / 2,610 utterances across 1,038 / 114 / 280
-  dialogues. **100% of CSV rows resolve to a real video file** (`dia<D>_utt<U>.mp4`,
-  confirmed against the extracted archive).
-- Class imbalance (train split): neutral 47.2%, joy 17.4%, surprise 12.1%,
-  anger 11.1%, sadness 6.8%, disgust 2.7%, fear 2.7%.
-- Utterance length: avg 7.9 words (min 1, max 69).
-- Clip duration has a long, corrupted-looking tail: average 3.1s, but test
-  split's max is **304.94 seconds** against a handful of near-zero-duration
-  rows. The loader must sanity-check and cap the read window rather than
-  trust `EndTime - StartTime` blindly, or a single bad row could hang frame
-  sampling on a 5-minute decode for one utterance.
-- Shot composition is highly inconsistent (visually confirmed on real
-  frames): a clean single-subject medium shot, a 7-person Central Perk
-  ensemble shot where the actual speaker is not the most visually salient
-  face, a 3-person conversation where one participant faces away from
-  camera entirely (no usable face), and a dark car-interior scene with
-  partial occlusion at both frame edges.
-- The face detector, tested against these exact frames: correctly found the
-  true speaker at 0.94 confidence in the crowded ensemble shot; correctly
-  produced zero detections for the person facing away from camera; produced
-  one plausible false positive (a hand mistaken for a face at 0.65
-  confidence, filtered out by the 0.75 threshold).
-- `Speaker` is not a closed set (one-off/guest characters appear alongside
-  the main cast), ruling out identity-enrollment approaches.
+with the current utterance last, context truncated from the oldest end to fit
+256 tokens, *k* = 4 by default and ablated at *k* = 0. On replay the context is
+the CSV dialogue; on the live path it is the ASR transcripts of the previous
+live turns. This is the single largest known lever on MELD — context-aware
+text models sit several F1 points above per-utterance ones — and it costs no
+parameters. It is also the natural behavior of a robot that remembers the
+conversation.
+
+Speaker names are **deliberately not used**, even though MELD provides them
+and they are known to help slightly (the model would learn actor priors): the
+live path has no names, and keeping the two paths identical is worth more
+than that gain. Recorded as a trade-off in §11.
+
+**Token set.** All text-encoder output tokens (up to 256) + all face tokens
++ all scene tokens across the turn's sampled frames (≤32 frames, so ≤ ~250
+visual tokens) + one learned `[FUSE]` token. Face and scene features pass
+through their modality projectors into d=768. Each token carries a
+modality-type embedding (text / face / scene / fuse); visual tokens add the
+frame-position and (face only) track-ID embeddings from §4.2.
+
+**Fusion transformer — single-stream.** 2–4 pre-LN transformer encoder
+layers, d=768, 8 heads, standard self-attention over the joint set. Every
+text token attends to every visual token and vice versa in every layer — this
+is full bidirectional crossover; a dual-stream (co-attention) design would
+carry the same information flow at ~2× the parameters and with two readouts to
+reconcile, and at this data scale the difference is noise. The `[FUSE]`
+output feeds both heads.
+
+**Modality dropout.** During training, with p=0.15 all visual tokens are
+dropped, and with p=0.15 all text tokens are dropped (never both). This
+makes the model robust to the verified no-face-detected case, and it means a
+single checkpoint can produce text-only and vision-only predictions by
+masking at inference — used in the demo's interpretability panel and as a
+sanity check. (The reported ablation numbers in §7 come from separately
+trained models; masked predictions are reported alongside, labeled as such.)
+
+**Heads and loss.** Emotion (7-way) and sentiment (3-way) linear heads on
+the `[FUSE]` output, trained jointly:
+
+```
+L = CE_emotion(w) + λ · CE_sentiment          λ ∈ [0.3, 0.5], tuned on dev
+```
+
+Emotion class weights `w ∝ (1/freq)^α` with α ∈ {0, 0.5, 1} tuned on dev —
+train is 47.2% neutral down to 2.7% fear/disgust (§5), and weighting trades
+weighted-F1 for macro-F1, so its strength is a hyperparameter, not a fixed
+choice. Label smoothing 0.1 is an option.
+
+**Metrics.** Weighted-F1 is primary (comparable to the published MELD
+literature), macro-F1 secondary, plus per-class F1 and a confusion matrix.
+Sentiment accuracy and F1 are reported as secondary outputs. The heads emit
+full probability distributions, not just argmax — richer state for a
+downstream consumer (§4.5).
+
+### 4.4 Response generation
+
+A separate small instruction-tuned LM, prompted (not fine-tuned), produces
+the response. Discriminative prediction gets a trained head (sample-efficient,
+fast, evaluable); generative text gets the LM (its actual strength). By the
+time the LM runs, the cross-modal reasoning is already done — its job is a
+short, in-character reactive line given an already-determined emotional
+context.
+
+**Prompt inputs:** a fixed persona system prompt (a small, friendly character
+robot; reply in ≤2 sentences; react, don't summarize), the last *k*
+utterances, the current utterance, the predicted emotion with its top-2
+probabilities, the sentiment, and the **visual gloss**.
+
+**Visual gloss** — human-readable cues derived from tensors already computed,
+with no extra forward passes:
+- (a) **CLIP zero-shot scene cues.** A fixed, hand-written bank of ~20–30
+  scene descriptors ("one person", "a group of people", "a dimly lit room",
+  "people sitting on a couch", "someone leaning in close", "an animated
+  gesture", …) is embedded once with CLIP's text tower. At end-of-turn, the
+  mean scene embedding over the turn is scored against the bank; the top 2
+  above a margin become phrases.
+- (b) **Per-face expression labels** from the face encoder's own head,
+  majority-voted per track across the turn: "2 faces visible: surprised,
+  neutral".
+
+The gloss is an input to the LM **only**. The classifier sees embeddings,
+never these labels, so its accuracy isn't bottlenecked by a hand-written
+vocabulary, and the LM's grounding stays inspectable.
+
+**Serving.** `mlx-lm`, 4-bit weights, streaming tokens, `max_new_tokens`
+≈ 40, any thinking mode off. Tokens are emitted into the event stream (§4.5)
+as they decode, so the first-token and completion latencies in §2 are
+measured directly.
+
+**Evaluation.** A 50-sample hand-scored rubric on replay outputs: consistent
+with the predicted tag; references a visual cue when one is present; ≤2
+sentences; in character; no invented facts. Pass rate per criterion is
+reported. An LLM-judge pass over the same samples is optional and secondary.
+
+**Not fine-tuned, and why.** MELD's next utterance is the next line of
+*Friends*, not a robot's response, so it's not a usable supervision target.
+A LoRA on a synthesized response set is a possible later step; its parameters
+would count toward the budget but are negligible.
+
+### 4.5 Structured state schema
+
+One inference core emits a JSON-lines event stream that both demo frontends
+consume. Two event kinds:
+
+```json
+{"turn_id": "dia38_utt4", "phase": "provisional", "frame": 5,
+ "faces_seen": 2,
+ "provisional_expression": {"surprise": 0.51, "neutral": 0.30, "joy": 0.08,
+                            "anger": 0.04, "sadness": 0.03, "fear": 0.02, "disgust": 0.02}}
+```
+
+```json
+{"turn_id": "dia38_utt4", "phase": "final",
+ "text": "You did WHAT?",
+ "emotion": "surprise",
+ "emotion_probs": {"surprise": 0.60, "neutral": 0.20, "joy": 0.12, "anger": 0.03,
+                   "fear": 0.02, "sadness": 0.02, "disgust": 0.01},
+ "sentiment": "negative",
+ "sentiment_probs": {"negative": 0.55, "neutral": 0.35, "positive": 0.10},
+ "faces_seen": 2,
+ "visual_cues": ["two people", "dimly lit room", "faces: surprised, neutral"],
+ "response": "Wait — say that again, slowly.",
+ "latency_ms": {"state": 84, "first_token": 610, "done": 1820}}
+```
+
+The `final` event is emitted as soon as the state is ready with `response`
+absent; response tokens follow as `{"turn_id": ..., "phase": "token",
+"text": "..."}` events, and a closing `{"phase": "done", ...}` carries the
+full response and the measured latencies.
+
+## 5. Data — verified facts and loader rules
+
+Verified directly against the real MELD.Raw archive, not from documentation.
+
+**Layout.** Clips are pre-cut per utterance as `dia<D>_utt<U>.mp4` at
+1280×720, ~24fps, under `train_splits/`, `dev_splits_complete/`, and
+`output_repeated_splits_test/`.
+
+**`(Dialogue_ID, Utterance_ID)` is not a unique key across splits.** IDs
+restart at 0 in each split: 1,740 keys collide between train and test, 675
+between train and dev, 670 between dev and test. A loader that indexes the
+whole archive into one map silently pairs labels with another split's video.
+**Loader rule: index each split's own directory only.** (The exploration
+viewer in §12 originally indexed globally and must be fixed; the footage
+findings below stand regardless of which split a frame came from, but any
+per-clip claim made with it should be re-checked with the fixed viewer.)
+
+**Resolution.** Within their own directories: train 9,989/9,989 rows resolve,
+test 2,610/2,610, dev 1,108/1,109 — `dia110_utt7` has no file and is dropped.
+The archive also contains a few unreferenced mp4s (dev: 1,112 files, test:
+2,615); they are ignored.
+
+**Timestamps are unreliable; ignore them.** `EndTime − StartTime` in the test
+CSV ranges from 0.0s to 304.94s, but the "304.94s" clip (`dia38_utt4`) is
+actually 57 frames / 2.38s on disk. Since every clip is already cut, the
+loader takes duration from the container and never reads the CSV
+timestamps. A 15s decode cap remains as a guard.
+
+**Decodability.** 450 randomly sampled files (150 per split) all decode with
+OpenCV. The preprocessing pass logs and drops any clip that fails rather than
+assuming this holds for all 13,708.
+
+**Class imbalance (train).** neutral 47.2%, joy 17.4%, surprise 12.1%, anger
+11.1%, sadness 6.8%, disgust 2.7%, fear 2.7%.
+
+**Utterance length.** avg 7.9 words (min 1, max 69). Average clip 3.1s.
+
+**Shot composition** is highly inconsistent (visually confirmed on real
+frames): a clean single-subject medium shot; a 7-person Central Perk ensemble
+where the speaker is not the most visually salient face; a 3-person
+conversation with one participant facing away from camera entirely (no usable
+face); a dark car interior with partial occlusion at both frame edges. The
+face detector on these frames: found the speaker at 0.94 confidence in the
+ensemble shot, correctly produced zero detections for the person facing away,
+and produced one plausible false positive (a hand, 0.65) that the 0.75
+threshold removes.
+
+**Speakers.** `Speaker` is not a closed set (one-off/guest characters appear
+alongside the main cast), which rules out identity enrollment. The same six
+main actors dominate all three splits — an identity-leakage risk for any
+fine-tuned face encoder (§11).
 
 ## 6. Training plan
 
-- Fine-tune with most of each pretrained encoder frozen, training only the
-  top layers/adapters plus the fusion transformer and classifier head from
-  scratch. This is both a compute-saving choice and a generalization
-  safeguard — fully fine-tuning 100M+ parameter encoders on ~10K training
-  examples risks overfitting.
-- PyTorch with the MPS backend (Apple M1 GPU) wherever supported. MPS op
-  coverage isn't complete — some ops silently fall back to CPU or need
-  `PYTORCH_ENABLE_MPS_FALLBACK=1` — so this will be validated empirically
-  during implementation rather than assumed to accelerate everything.
-- Local training only; no Modal needed given the actual trainable-parameter
-  count (fusion transformer + heads + adapters, not full encoder backbones).
+Training is staged so that a strong, fully-ablated result exists before any
+GPU money is spent, and so that no single run is long enough for a failure to
+cost a day.
 
-## 7. Evaluation & expectation calibration
+**Preprocessing pass (once, local CPU, multiprocess).** For every clip:
+decode at 3fps → detect faces → track → save face crops (224², JPEG),
+letterboxed frames (224²), and per-frame metadata (boxes, scores, track IDs,
+cut flags). Roughly 90K sampled frames and an estimated ~135K face crops
+(~1.5 faces/frame — to be measured), a few GB on disk. Estimated 30–60 min.
 
-Published MELD baselines (verified, not assumed): text-alone unimodal
-performance is the strongest single modality at roughly 58-66% F1;
-vision-alone is markedly weaker, around 42% F1; multimodal fusion adds only
-about 1-2 points of F1 over the best single modality. We report our numbers
-against these baselines directly, and the write-up will **not** imply the
-vision track dominates or that fusion produces a dramatic accuracy jump —
-the value case for this project is a working, interpretable, real-time
-multimodal architecture with a measurable (if modest) fusion gain over a
-text-only ablation, not beating text alone by a wide margin.
+**Feature cache (once, local MPS).** Frozen face-encoder pooled features
+(768-d) and softmax, and frozen CLIP scene features (512-d, the projected
+embedding, so the same cached vector serves both fusion and the gloss).
+~1.5KB per token → a few hundred MB. Estimated 45–60 min locally.
+
+**Stage 1 — local, MPS.** Train from scratch: fusion transformer, projectors,
+both heads. Fine-tune: top half of RoBERTa-base (text is cheap to keep in the
+loop — ~10K short sequences per epoch). Vision features come from the cache,
+so the vision encoders are not in the loop. Estimated 2–3 min/epoch, 10–15
+epochs with early stopping on dev weighted-F1 → ~30 min per run. **Every
+ablation in §7 is one such run**, which is what makes the full table
+affordable. Goal: a benchmark that stands against the published text-only and
+multimodal numbers before Stage 2 starts.
+
+**Stage 2 — Modal GPU (A10G/A100), gated on Stage 1.** Only after Stage 1 has
+produced a strong benchmark. Unfreeze the top 4 layers of the face ViT
+(optionally: full RoBERTa fine-tune, or RoBERTa-large at +230M params for an
+expected ~1–2 F1), initialize fusion and heads from the Stage 1 checkpoint,
+lower learning rate. The face encoder is back in the loop, so each epoch
+re-encodes all crops: estimated ~1 hour per run on an A100. Kept only if it
+beats Stage 1 on dev. The inference path and parameter count are unchanged
+(except by the RoBERTa-large option).
+
+**Common.** AdamW, linear warmup + cosine decay, gradient clipping, fixed
+seeds, dev-based model selection, test evaluated once per reported
+configuration. PyTorch on MPS for local work; MPS op coverage is incomplete
+and some ops fall back to CPU (`PYTORCH_ENABLE_MPS_FALLBACK=1`), so
+acceleration is validated empirically, not assumed.
+
+**Budget check.** The hard constraint is that training completes in under 24
+hours. Stage 1 runs are minutes; Stage 2 runs are about an hour; the
+preprocessing and cache passes are under two hours combined. The constraint is
+met with a wide margin on either machine.
+
+## 7. Evaluation and expectation calibration
+
+**Published baselines (verified, not assumed).** On MELD, text alone is the
+strongest single modality at roughly 58–66% weighted-F1 depending on the text
+model; vision alone is markedly weaker, around 42%; multimodal fusion adds
+about 1–2 points over the best single modality. Dialogue-context text models
+sit at the top of the text range. Our numbers are reported against these
+directly. The write-up will **not** imply that vision dominates or that fusion
+produces a dramatic jump — the value case is a working, interpretable,
+real-time multimodal architecture with a measurable (if modest) fusion gain
+over a text-only ablation.
+
+**Ablation table.** Each row is a separately trained Stage 1 model (3 seeds
+where cheap; mean ± std reported):
+
+| Model | What it isolates |
+|---|---|
+| Text-only, *k*=0 | Per-utterance text baseline |
+| Text-only, *k*=4 | Value of dialogue context |
+| Vision-only, zero-training | `dima806` head averaged over faces and frames — no training at all |
+| Vision-only, trained | Fusion over face + scene tokens, no text |
+| **Fusion (full)** | The submitted model |
+| Fusion − scene token | Value of the global frame |
+| Fusion − context (*k*=0) | Context's contribution inside fusion |
+| Fusion − track-ID embedding | Stretch; also compared specifically on clips containing a detected cut |
+| Stage 2 fusion | If run; vs. Stage 1 on the same test split |
+
+Modality-masked predictions from the full model (§4.3) are reported alongside,
+labeled as masked rather than retrained.
+
+**Protocol.** All numbers come from **batch evaluation over cached features**
+— not from the real-time replay path, which would take ~2.25 hours per pass
+over the 2,610 test clips. Dev selects; test is evaluated once per reported
+configuration. Per-class F1 and the confusion matrix are reported for the
+submitted model; sentiment metrics alongside.
+
+**Response quality** is evaluated per §4.4. **Latency and resources** per §9.
 
 ## 8. Demo interfaces
 
-Two paths, sharing one inference core:
+One inference core emits the event stream in §4.5; each demo is a thin
+frontend on it. This satisfies the assignment's "one input travelling through
+the system to both outputs" — the same turn produces the state event and the
+streamed response.
 
-1. **Live**: webcam + live speech-to-text (Whisper-base), processed through
-   the same face pipeline and fusion model, emitting a live tag + response.
-   This is the interactive "character robot" demo the assignment's framing
-   describes. ASR is a live-path convenience for producing the text input
-   from speech — it does not make this a tri-modal system; the fusion model
-   itself still only ever sees text + vision.
-2. **Replay**: MELD test-split clips fed utterance-by-utterance, streamed
-   incrementally rather than processed as a batch, for reproducible
-   accuracy evaluation against ground truth.
-3. **Optional stretch** (only if time remains after 1 and 2 are solid):
-   replaying a small curated set of clips from other TV shows, as
-   generalization evidence — does the system work on faces/voices never
-   seen in MELD. Not a replacement for the live path. Sourcing clips from
-   other copyrighted shows for a demo is a minor consideration worth a
-   one-line acknowledgment in the final write-up.
+1. **Replay (real-time).** ~10 curated test clips, stratified by emotion and
+   including the hard cases from §5 (ensemble shot, face-away, dark car),
+   played at real speed with frames fed incrementally. One window shows:
+   video with face boxes and track IDs; the provisional expression bars
+   moving during the clip; the ground-truth text arriving at clip end; the
+   final emotion + sentiment distributions; the visual cues; the streamed
+   response; and the measured latency per event.
 
-## 9. Hardware & resource requirements
+   **Consistency check.** For these clips, the batch-eval path (§7) and the
+   replay path must produce identical final predictions — asserted and
+   reported, as a guard against train/serve skew.
 
-- Development machine: 16GB M1 MacBook.
-- MELD.Raw extracted footprint: ~20GB disk (10.1GB compressed download,
-  deleted after verified extraction).
-- Estimated total inference-path parameters: ~3.4-4.4B (see §4.1), under the
-  6B ceiling.
-- Actual measured training wall-clock time and peak memory usage will be
-  reported once implemented, not estimated in advance.
+2. **Live.** Webcam sampled at ~3fps + microphone. webrtcvad marks end of
+   speech; Whisper-base transcribes the turn; the transcript enters the same
+   core, with context = the previous live turns. ASR is a convenience for
+   producing text from speech; the fusion model still only sees text +
+   vision, so this is not a tri-modal system. **Push-to-talk is the fallback**
+   if VAD segmentation proves unreliable.
 
-## 10. External/generated components — ownership
+3. **Optional stretch.** Replay a small curated set of clips from other TV
+   shows as generalization evidence — faces never seen in MELD. Not a
+   replacement for the live path. Sourcing clips from other copyrighted shows
+   gets a one-line acknowledgment in the write-up.
 
-Reused pretrained, not trained by us:
-- Text encoder backbone (RoBERTa-base class)
-- Face/expression encoder backbone (ViT-Base, dima806/facial_emotions_image_detection)
-- Global scene encoder (CLIP ViT-B/32 image encoder) — used fully frozen
-- Face detector (OpenCV YuNet)
-- ASR (Whisper-base)
-- Response LM (small instruction-tuned model)
+## 9. Hardware and resource reporting
 
-Trained by us, from scratch or fine-tuned:
-- Cross-attention fusion transformer (from scratch)
-- Emotion classifier head (from scratch)
-- Modality projectors for the face and scene encoders (from scratch)
-- Top layers/adapters of the text and face encoders (fine-tuned)
+- Development and inference machine: 16GB M1 MacBook. Modal GPU (A10G/A100)
+  for Stage 2 only.
+- MELD.Raw extracted footprint: ~20GB (10.1GB compressed, deleted after
+  verified extraction). Preprocessing outputs and feature caches: a few GB.
+
+**Reported (measured, not estimated):**
+- Preprocessing and feature-cache wall-clock time.
+- Stage 1: per-epoch and per-run wall-clock, peak memory. Stage 2: GPU-hours.
+- Inference, both paths, p50/p95: per-sampled-frame vision cost (must stay
+  under the 333ms frame interval to keep up), and the three end-of-turn
+  events in §2 (state, first token, done).
+- Peak resident memory on the live path with all models loaded.
+- Final parameter count table with the chosen LM.
+
+## 10. External and generated components — ownership
+
+Reused pretrained, not trained by us (licenses recorded from each source at
+implementation):
+
+| Component | Source | License |
+|---|---|---|
+| RoBERTa-base | HF `roberta-base` | MIT |
+| Face/expression encoder | HF `dima806/facial_emotions_image_detection` | per model card |
+| CLIP ViT-B/32 (image + text towers) | OpenAI CLIP | MIT |
+| YuNet face detector | opencv/opencv_zoo | per repo |
+| Whisper-base | OpenAI | MIT |
+| webrtcvad | Google WebRTC | BSD |
+| Response LM | chosen per §4.1 | permissive (Apache-2.0/MIT) required |
+
+Trained by us:
+- Fusion transformer (from scratch)
+- Modality projectors (from scratch)
+- Emotion and sentiment heads (from scratch)
+- Top half of RoBERTa-base (fine-tuned, Stage 1)
+- Top 4 layers of the face ViT (fine-tuned, Stage 2, if run)
 
 ## 11. Known limitations
 
-- Vision is a genuinely weaker signal than text in this dataset (per
-  published baselines, §7) — the design should not be read as claiming
-  facial expression dominates the prediction.
-- Face detection + tracking materially reduces but does not eliminate the
-  risk of missing the speaker's face in a given frame; the global-frame
-  token is a mitigation, not a guarantee, and mitigates rather than
-  measures the residual risk.
-- Face tracking is approximate at ~3fps sampling, not frame-perfect
-  identity. Hard camera cuts can still corrupt the track-ID continuity
-  signal even with shot-boundary detection and appearance-gating (§4.2);
-  whether the track-ID embedding nets positive at all is an open empirical
-  question, planned as an ablation rather than assumed.
-- The 0.75 confidence threshold trades some real secondary detections for
-  fewer false positives (§4.2) — a deliberate, not free, choice.
-- MPS acceleration coverage on Apple Silicon is incomplete; some training
-  ops may run on CPU.
-- The response LM is prompted, not fine-tuned, in this submission — response
-  text quality is bounded by the base model's instruction-following, not
-  adapted to this specific character-robot use case.
+- Vision is a genuinely weaker signal than text on this dataset (§7); the
+  design does not claim facial expression dominates the prediction.
+- Face detection + tracking reduces but does not eliminate missing the
+  speaker's face; the scene token is a mitigation, not a guarantee.
+- Tracking is approximate at ~3fps. Shot-cut reset handles hard cuts;
+  appearance gating is a stretch; whether the track-ID embedding helps at all
+  is an open empirical question (§7).
+- The 0.75 detector threshold trades real secondary detections for fewer
+  false positives — deliberate, not free.
+- **Actor-identity leakage.** The same six actors dominate all splits. Frozen
+  vision encoders (Stage 1) limit the model's ability to learn actor→emotion
+  priors; Stage 2 unfreezing raises that risk, and only the other-show
+  stretch test would expose it.
+- Speaker names are unused for path parity (§4.3), forfeiting a known small
+  gain on MELD.
+- Live path: ASR errors propagate into the text signal; the dialogue context
+  is ASR history; VAD end-of-turn adds latency and can mis-segment (hence
+  push-to-talk as fallback).
+- MPS op coverage is incomplete; some local training ops may run on CPU.
+- The response LM is prompted, not fine-tuned; response quality is bounded by
+  the base model's instruction-following. The visual-gloss vocabulary is a
+  fixed hand-written bank.
+- The §2 latency figures are targets; the measured p50/p95 in §9 are the
+  claims.
 
-## 12. Tooling delivered during design/exploration
+## 12. Tooling delivered during design and exploration
 
-- `scripts/extract_meld_raw.sh` — extracts MELD.Raw.tar.gz (including nested
-  per-split archives).
-- `scripts/view_meld_clips.py` — interactive labeled-clip viewer (text/
-  emotion/sentiment overlay, stratified-by-emotion sampling, optional
-  `--faces` face-detection overlay with live box + count).
-- `scripts/download_face_model.sh` — downloads the OpenCV YuNet face
-  detector model.
+- `scripts/extract_meld_raw.sh` — extracts MELD.Raw.tar.gz, including the
+  nested per-split archives.
+- `scripts/view_meld_clips.py` — interactive labeled-clip viewer (text /
+  emotion / sentiment overlay, stratified-by-emotion sampling, optional
+  `--faces` face-detection overlay). **Must be changed to index within the
+  selected split's directory** (§5); its current global index can pair a
+  label with another split's clip.
+- `scripts/download_face_model.sh` — downloads the OpenCV YuNet detector.
 
-These were built to ground this design in real data rather than
-documentation assumptions, and remain useful for qualitative
-error-analysis later in the project (e.g., visualizing model predictions
-against ground truth on held-out clips).
+These were built to ground the design in real data rather than documentation
+assumptions, and remain useful for qualitative error analysis later
+(visualizing predictions against ground truth on held-out clips).
