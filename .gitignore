@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .idea/
+.worktrees/
 
 # Downloaded/generated data and model weights -- reproducible via scripts/, not tracked.
 data/
