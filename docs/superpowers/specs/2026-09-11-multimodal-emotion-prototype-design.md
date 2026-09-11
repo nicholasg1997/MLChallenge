@@ -364,11 +364,19 @@ test 2,610/2,610, dev 1,108/1,109 — `dia110_utt7` has no file and is dropped.
 The archive also contains a few unreferenced mp4s (dev: 1,112 files, test:
 2,615); they are ignored.
 
-**Timestamps are unreliable; ignore them.** `EndTime − StartTime` in the test
-CSV ranges from 0.0s to 304.94s, but the "304.94s" clip (`dia38_utt4`) is
-actually 57 frames / 2.38s on disk. Since every clip is already cut, the
-loader takes duration from the container and never reads the CSV
-timestamps. A 15s decode cap remains as a guard.
+**Timestamps are redundant, not unreliable — ignore them anyway.**
+`EndTime − StartTime` in the test CSV ranges from 0.0s to 304.94s. The
+304.94s row (`dia38_utt4`) was suspected to be a bad timestamp, but the
+*correctly split-scoped* file (`output_repeated_splits_test/dia38_utt4.mp4`)
+is 7,312 frames at ~24fps — 304.97s, matching the CSV almost exactly. It's a
+genuine outlier-length utterance, not a data error. (The 2.38s/57-frame
+figure floated during investigation came from `train_splits/dia38_utt4.mp4`
+instead — the cross-split ID collision above catching out the very check
+looking for it.) Since every clip is already pre-cut to its labeled span,
+the loader takes duration from the container and never parses the CSV
+timestamps regardless — one less thing to get wrong, not a correction for
+bad data. A 15s decode cap remains as a guard against outliers like this one
+consuming disproportionate preprocessing time.
 
 **Decodability.** 450 randomly sampled files (150 per split) all decode with
 OpenCV. The preprocessing pass logs and drops any clip that fails rather than

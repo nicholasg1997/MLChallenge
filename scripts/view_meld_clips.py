@@ -26,6 +26,16 @@ LABELS_DIR = REPO_ROOT / "data" / "meld" / "labels"
 RAW_EXTRACTED_DIR = REPO_ROOT / "data" / "meld" / "raw" / "extracted"
 FACE_MODEL_PATH = REPO_ROOT / "models" / "face_detection_yunet_2023mar.onnx"
 
+# (Dialogue_ID, Utterance_ID) is NOT a unique key across splits -- IDs restart
+# at 0 in each split, so e.g. train and test both have a "dia38_utt4". Each
+# split's clips must be indexed from its own directory only; a global index
+# across all three would silently pair a label with another split's video.
+SPLIT_DIRS = {
+    "train": "MELD.Raw/train_splits",
+    "dev": "MELD.Raw/dev_splits_complete",
+    "test": "MELD.Raw/output_repeated_splits_test",
+}
+
 CONFIDENCE_THRESHOLD = 0.75  # Confidence threshold for facial recognition
 
 # BGR (OpenCV order), not RGB.
@@ -46,14 +56,13 @@ def load_rows(split):
         return list(csv.DictReader(f))
 
 
-def build_video_index(root):
-    """Map (dialogue_id, utterance_id) -> path by scanning for dia<D>_utt<U>.* files.
-
-    Scans by filename pattern rather than assuming a fixed folder layout, since the
-    exact subfolder names inside MELD's raw archive vary by mirror/version.
+def build_video_index(split_dir):
+    """Map (dialogue_id, utterance_id) -> path by scanning ONE split's directory
+    for dia<D>_utt<U>.* files. Must be scoped to a single split -- see the
+    SPLIT_DIRS comment above for why a global index across splits is wrong.
     """
     index = {}
-    for p in root.rglob("dia*_utt*.*"):
+    for p in split_dir.glob("dia*_utt*.*"):
         try:
             dia_part, utt_part = p.stem.split("_")
             key = (int(dia_part.replace("dia", "")), int(utt_part.replace("utt", "")))
@@ -169,8 +178,9 @@ def main():
                          help="overlay face detection boxes + a per-frame face count")
     args = parser.parse_args()
 
-    if not RAW_EXTRACTED_DIR.exists():
-        sys.exit(f"Extracted video directory not found: {RAW_EXTRACTED_DIR}\n"
+    split_dir = RAW_EXTRACTED_DIR / SPLIT_DIRS[args.split]
+    if not split_dir.exists():
+        sys.exit(f"Split directory not found: {split_dir}\n"
                   f"Run scripts/extract_meld_raw.sh first.")
 
     detector = None
@@ -187,9 +197,9 @@ def main():
         if not rows:
             sys.exit(f"No rows with emotion={args.emotion!r} in {args.split}")
 
-    print("Indexing extracted video files...")
-    index = build_video_index(RAW_EXTRACTED_DIR)
-    print(f"  found {len(index)} video files under {RAW_EXTRACTED_DIR}")
+    print(f"Indexing {args.split} video files...")
+    index = build_video_index(split_dir)
+    print(f"  found {len(index)} video files under {split_dir}")
     if not index:
         sys.exit("No video files matched the dia<D>_utt<U>.* pattern -- check the extracted layout.")
 
