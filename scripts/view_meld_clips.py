@@ -17,24 +17,15 @@ import csv
 import random
 import sys
 import textwrap
-from pathlib import Path
+from pathlib import Path as _Path
+
+sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "src"))
 
 import cv2
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-LABELS_DIR = REPO_ROOT / "data" / "meld" / "labels"
-RAW_EXTRACTED_DIR = REPO_ROOT / "data" / "meld" / "raw" / "extracted"
-FACE_MODEL_PATH = REPO_ROOT / "models" / "face_detection_yunet_2023mar.onnx"
-
-# (Dialogue_ID, Utterance_ID) is NOT a unique key across splits -- IDs restart
-# at 0 in each split, so e.g. train and test both have a "dia38_utt4". Each
-# split's clips must be indexed from its own directory only; a global index
-# across all three would silently pair a label with another split's video.
-SPLIT_DIRS = {
-    "train": "MELD.Raw/train_splits",
-    "dev": "MELD.Raw/dev_splits_complete",
-    "test": "MELD.Raw/output_repeated_splits_test",
-}
+from meld_emotion.config import (
+    LABELS_DIR, RAW_EXTRACTED_DIR, FACE_DETECTOR_MODEL_PATH as FACE_MODEL_PATH, SPLIT_DIRS,
+)
 
 CONFIDENCE_THRESHOLD = 0.75  # Confidence threshold for facial recognition
 
