@@ -42,6 +42,13 @@ def test_load_split_rejects_an_unknown_emotion_label(tmp_path):
         load_split("dev", labels_dir=tmp_path)
 
 
+def test_load_split_rejects_an_unknown_sentiment_label(tmp_path):
+    from meld_emotion.data.labels import load_split
+    _write_csv(tmp_path / "dev_sent_emo.csv", [_row(0, 0, "hi", sentiment="mixed")])
+    with pytest.raises(ValueError, match="mixed"):
+        load_split("dev", labels_dir=tmp_path)
+
+
 def test_context_window_returns_previous_k_plus_current(tmp_path):
     from meld_emotion.data.labels import load_split, group_by_dialogue, context_window
     _write_csv(tmp_path / "dev_sent_emo.csv", [
