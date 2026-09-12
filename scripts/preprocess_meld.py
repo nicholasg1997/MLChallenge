@@ -4,6 +4,11 @@ faces, crop and letterbox, write crops + metadata.json per clip under
 data/meld/preprocessed/<split>/. Resumable: clips with an existing
 metadata.json are skipped unless --overwrite.
 
+Disk footprint: measured at ~26MB/40 clips for face+scene JPEGs and
+~5.6MB/40 clips for cached features, so the full ~13,700-utterance dataset
+should take roughly a few GB of crops (data/meld/preprocessed/) and under
+2GB of cached features (data/meld/features/) -- plan disk space accordingly.
+
 Usage:
     uv run python scripts/preprocess_meld.py --split dev --workers 8
 """
