@@ -32,14 +32,14 @@ CLIP scene encoders), Pillow.
   ~75K. The running total is carried into the training plan.
 - Frames are sampled at ~3fps (design doc §2, §4.2).
 - MELD clips are pre-cut per utterance; the CSV `StartTime`/`EndTime` columns
-  are redundant and are **never read** (design doc §5). `dia38_utt4` in the
-  *test* split is a genuine 304.97s outlier utterance matching its 304.94s
-  CSV timestamp almost exactly — not a bad timestamp (a 2.38s file with the
-  same name exists, but it's `train_splits/dia38_utt4.mp4`, an unrelated clip
-  from a different split; that mismatch is the cross-split collision this
-  same Global Constraints section warns about below, not a property of the
-  test row). A 15-second decode cap is kept purely as a guard against
-  outliers like this one.
+  are **never read** — duration comes from the container (design doc §5).
+  37 clips exceed 15s — mostly genuine long lines (15–30s, ~20 words),
+  plus a few clearly mis-cut by the official cutter (`test/dia38_utt4` is
+  305s of footage for a 7-word line) — and ~63 are too short to contain
+  their utterance. The 15-second decode cap bounds the cost of the long
+  ones, and the manifest records each clip's container `duration_s` so
+  training can mask implausible clips. One train file
+  (`dia125_utt3`) is unreadable and is recorded as `decode_failed`.
 - **`(Dialogue_ID, Utterance_ID)` is never a unique key across MELD splits** —
   IDs restart at 0 in each split (1,740 collide between train/test alone).
   Every index, cache, or lookup in this plan is scoped to one split's own
@@ -169,7 +169,7 @@ and registers the `network` marker used by Task 8.
 - Produces: `meld_emotion` importable from any working directory inside the
   uv environment; pytest marker `network` (deselected by default).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_package.py`:
 
@@ -191,12 +191,12 @@ def test_package_imports_from_a_neutral_cwd_without_path_hacks(tmp_path):
     assert "train" in result.stdout
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_package.py -v`
 Expected: FAIL — the assertion message contains `ModuleNotFoundError: No module named 'meld_emotion'`
 
-- [ ] **Step 3: Rewrite `pyproject.toml`**
+- [x] **Step 3: Rewrite `pyproject.toml`**
 
 Replace the whole file with:
 
@@ -229,19 +229,19 @@ markers = [
 ]
 ```
 
-- [ ] **Step 4: Sync the environment (installs the package editable, re-locks)**
+- [x] **Step 4: Sync the environment (installs the package editable, re-locks)**
 
 Run: `uv sync`
 Expected: output includes `Built mlchallenge @ file://...` and `+ mlchallenge==0.1.0 (from file://...)`.
 Then run: `uv pip show mlchallenge | head -3`
 Expected: `Name: mlchallenge`, `Version: 0.1.0`, and an `Editable project location:` line pointing at this checkout.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_package.py -v`
 Expected: 1 passed
 
-- [ ] **Step 6: Remove the path hack from `scripts/view_meld_clips.py`**
+- [x] **Step 6: Remove the path hack from `scripts/view_meld_clips.py`**
 
 Replace these lines near the top of the script:
 
@@ -267,17 +267,17 @@ import cv2
 (`sys` stays — the script still uses `sys.exit`. Nothing else in the script
 uses `Path`.)
 
-- [ ] **Step 7: Verify the viewer still runs**
+- [x] **Step 7: Verify the viewer still runs**
 
 Run: `uv run python scripts/view_meld_clips.py --help`
 Expected: the usage text, no traceback.
 
-- [ ] **Step 8: Run the whole suite**
+- [x] **Step 8: Run the whole suite**
 
 Run: `uv run pytest -v`
 Expected: 5 passed (4 config + 1 package)
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add pyproject.toml uv.lock scripts/view_meld_clips.py tests/test_package.py
@@ -305,7 +305,7 @@ git commit -m "Make meld_emotion an editable install (hatchling); move pytest to
   by_dialogue, dialogue_id: int, utterance_id: int, k: int) -> list[str]` (up
   to `k` previous texts, oldest first, then the current text last).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_labels.py`:
 
@@ -387,12 +387,12 @@ def test_group_by_dialogue_sorts_by_utterance_id(tmp_path):
     assert [u.text for u in by_dialogue[0]] == ["first", "middle", "second"]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_labels.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.data'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/meld_emotion/data/__init__.py` (empty file).
 
@@ -460,12 +460,12 @@ def context_window(by_dialogue: dict[int, list[Utterance]], dialogue_id: int,
     return [u.text for u in dialogue[start:idx + 1]]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_labels.py -v`
 Expected: 6 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/meld_emotion/data/__init__.py src/meld_emotion/data/labels.py tests/test_labels.py
@@ -484,7 +484,7 @@ git commit -m "Add MELD label loading with validation and dialogue context windo
 **Interfaces:**
 - Produces: `build_video_index(split_dir: Path) -> dict[tuple[int, int], Path]`.
 
-- [ ] **Step 1: Write the failing tests (including the collision regression)**
+- [x] **Step 1: Write the failing tests (including the collision regression)**
 
 Create `tests/test_video_index.py`:
 
@@ -521,12 +521,12 @@ def test_does_not_see_files_in_a_sibling_split_directory(tmp_path):
     assert index_a[(38, 4)] == split_a / "dia38_utt4.mp4"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_video_index.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.data.video_index'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/meld_emotion/data/video_index.py`:
 
@@ -552,12 +552,12 @@ def build_video_index(split_dir: Path) -> dict[tuple[int, int], Path]:
     return index
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_video_index.py -v`
 Expected: 3 passed
 
-- [ ] **Step 5: Point `scripts/view_meld_clips.py` at the shared implementation**
+- [x] **Step 5: Point `scripts/view_meld_clips.py` at the shared implementation**
 
 Delete the script's local `build_video_index` function (the whole `def
 build_video_index(split_dir): ...` block) and add this import next to the
@@ -567,12 +567,12 @@ existing `from meld_emotion.config import (...)` line:
 from meld_emotion.data.video_index import build_video_index
 ```
 
-- [ ] **Step 6: Verify the viewer still runs against real data**
+- [x] **Step 6: Verify the viewer still runs against real data**
 
 Run: `uv run python scripts/view_meld_clips.py --split dev --per-emotion 1 --seed 0` and press `q` when the first window appears.
 Expected: prints `Indexing dev video files...`, then `  found 1112 video files under .../MELD.Raw/dev_splits_complete`, then one sampled-clip line per emotion, no traceback.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/meld_emotion/data/video_index.py tests/test_video_index.py scripts/view_meld_clips.py
@@ -600,12 +600,12 @@ git commit -m "Extract per-split video index into shared module with a collision
   with `setInputSize((w, h))` and `detect(frame) -> (retval, faces_or_None)`
   is accepted as `detector`, which is how later tasks stub it.
 
-- [ ] **Step 1: Add numpy as an explicit dependency**
+- [x] **Step 1: Add numpy as an explicit dependency**
 
 Run: `uv add "numpy>=1.26"`
 Expected: `pyproject.toml` gains `"numpy>=1.26"` under `dependencies`; `uv.lock` updated (numpy was already present transitively via opencv, so nothing new downloads).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `tests/test_face_detector.py`. These test the wrapper's parsing logic
 against a stub detector, not the real YuNet model, so they run without the
@@ -657,12 +657,12 @@ def test_detect_faces_handles_multiple_rows():
     assert len(result) == 2
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_face_detector.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.vision'`
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Create `src/meld_emotion/vision/__init__.py` (empty file).
 
@@ -697,12 +697,12 @@ def detect_faces(detector, frame_bgr) -> list[tuple[int, int, int, int, float]]:
     return [(int(f[0]), int(f[1]), int(f[2]), int(f[3]), float(f[-1])) for f in faces]
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_face_detector.py -v`
 Expected: 3 passed
 
-- [ ] **Step 6: Point `scripts/view_meld_clips.py` at the shared implementation**
+- [x] **Step 6: Point `scripts/view_meld_clips.py` at the shared implementation**
 
 Delete the script's local `CONFIDENCE_THRESHOLD` constant and its local
 `build_face_detector` and `detect_faces` functions, and add this import next
@@ -715,12 +715,12 @@ from meld_emotion.vision.face_detector import build_face_detector, detect_faces
 The script's existing `build_face_detector()` call (no arguments) keeps the
 0.75 default.
 
-- [ ] **Step 7: Verify the viewer's face overlay still works against real data**
+- [x] **Step 7: Verify the viewer's face overlay still works against real data**
 
 Run: `uv run python scripts/view_meld_clips.py --split dev --per-emotion 1 --seed 0 --faces` and press `q` after the first window appears.
 Expected: no traceback; green face boxes with scores render as before.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add pyproject.toml uv.lock src/meld_emotion/vision/__init__.py src/meld_emotion/vision/face_detector.py tests/test_face_detector.py scripts/view_meld_clips.py
@@ -757,7 +757,7 @@ between 0.25 and 0.30 in that sample. (Sitcom cuts are between shots of the
 same set, so the colour histograms differ far less than a synthetic red→green
 cut.)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_tracker.py`:
 
@@ -854,12 +854,12 @@ def test_very_different_frames_are_a_shot_cut():
     assert is_shot_cut(_red(), _green()) is True
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_tracker.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.vision.tracker'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/meld_emotion/vision/tracker.py`:
 
@@ -969,12 +969,12 @@ def is_shot_cut(prev_frame_bgr, curr_frame_bgr, threshold: float = SHOT_CUT_THRE
     return shot_change_score(prev_frame_bgr, curr_frame_bgr) >= threshold
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_tracker.py -v`
 Expected: 11 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/meld_emotion/vision/tracker.py tests/test_tracker.py
@@ -1028,7 +1028,7 @@ git commit -m "Add IoU face tracker (age-then-match ordering) and HSV shot-chang
 is the position in the original video. Failed clips get a `metadata.json` too
 (with `frames: []`) so failures are persisted, not just counted.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/test_preprocess.py`:
 
@@ -1173,12 +1173,12 @@ def test_preprocess_split_counts_ok_and_missing_videos(tmp_path):
     assert counts == {"ok": 2, "missing_video": 1}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_preprocess.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.data.preprocess'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/meld_emotion/data/preprocess.py`:
 
@@ -1204,7 +1204,7 @@ from meld_emotion.vision.face_detector import build_face_detector, detect_faces
 from meld_emotion.vision.tracker import SHOT_CUT_THRESHOLD, FaceTracker, shot_change_score
 
 SAMPLE_FPS = 3.0
-MAX_DECODE_SECONDS = 15.0  # guard only: MELD clips are pre-cut (design doc §5)
+MAX_DECODE_SECONDS = 15.0  # 37 MELD clips run 15-305s; the extreme ones are mis-cut for a one-line utterance (design doc §5)
 CROP_SIZE = 224
 FACE_MARGIN = 0.2
 
@@ -1387,12 +1387,12 @@ def preprocess_split(split: str, utterances, index: dict, out_dir: Path = PREPRO
     return counts
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_preprocess.py -v`
 Expected: 11 passed
 
-- [ ] **Step 5: Append the skippable integration test against real data**
+- [x] **Step 5: Append the skippable integration test against real data**
 
 Append to `tests/test_preprocess.py`:
 
@@ -1417,12 +1417,12 @@ def test_preprocess_clip_finds_the_ensemble_faces_in_a_real_clip(tmp_path):
     assert (tmp_path / "dev" / "dia1_utt1" / "metadata.json").exists()
 ```
 
-- [ ] **Step 6: Run the integration test**
+- [x] **Step 6: Run the integration test**
 
 Run: `uv run pytest tests/test_preprocess.py -v -k real_clip`
 Expected: 1 passed (MELD is extracted at `data/meld/raw/extracted`), or 1 skipped otherwise.
 
-- [ ] **Step 7: Add the CLI driver**
+- [x] **Step 7: Add the CLI driver**
 
 Create `scripts/preprocess_meld.py`:
 
@@ -1473,7 +1473,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 8: Smoke-test the CLI on a small slice of real data, single- and multi-process**
+- [x] **Step 8: Smoke-test the CLI on a small slice of real data, single- and multi-process**
 
 Run: `uv run python scripts/preprocess_meld.py --split dev --limit 5 --workers 1`
 Expected: `Done in 0.0 min: {'ok': 5} (total=5)` and `data/meld/preprocessed/dev/` contains 5 clip directories each with a `metadata.json`.
@@ -1481,7 +1481,7 @@ Expected: `Done in 0.0 min: {'ok': 5} (total=5)` and `data/meld/preprocessed/dev
 Run: `uv run python scripts/preprocess_meld.py --split dev --limit 40 --workers 4`
 Expected: `Done in ... {'ok': 40} (total=40)` — the first 5 are resumed instantly, the rest processed in parallel, no traceback (this exercises the spawn-based pool on macOS).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/meld_emotion/data/preprocess.py tests/test_preprocess.py scripts/preprocess_meld.py
@@ -1520,12 +1520,12 @@ Verified facts this task relies on: the checkpoint is
 fear, surprise, happy` and `hidden_size` 768; CLIP ViT-B/32's
 `projection_dim` is 512.
 
-- [ ] **Step 1: Add ML dependencies**
+- [x] **Step 1: Add ML dependencies**
 
 Run: `uv add "torch>=2.2" "transformers>=4.40" "pillow>=10.0"`
 Expected: `pyproject.toml` and `uv.lock` updated; torch's arm64 wheel installs (a few hundred MB).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `tests/test_encoders.py`:
 
@@ -1594,12 +1594,12 @@ def test_scene_encoder_shapes(scene_encoder):
     assert scene_encoder.encode_batch([]).shape == (0, 512)
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_encoders.py -m network -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.vision.encoders'`
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Create `src/meld_emotion/vision/encoders.py`:
 
@@ -1701,17 +1701,17 @@ class SceneEncoder:
         return self.encode_batch([image])[0]
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_encoders.py -m network -v`
 Expected: 5 passed (first run downloads weights; allow a few minutes).
 
-- [ ] **Step 6: Confirm the default suite still skips them and passes offline**
+- [x] **Step 6: Confirm the default suite still skips them and passes offline**
 
 Run: `uv run pytest -v`
 Expected: all Task 1–7 tests pass; `test_encoders.py` reports `5 deselected`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add pyproject.toml uv.lock src/meld_emotion/vision/encoders.py tests/test_encoders.py
@@ -1747,7 +1747,7 @@ git commit -m "Add batched frozen face-expression and CLIP scene encoders with c
   progress_every: int = 500) -> Counter` (keys `cached`, `skipped_existing`,
   `skipped_not_ok`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_cache.py`:
 
@@ -1856,12 +1856,12 @@ def test_build_split_cache_caches_ok_clips_skips_failed_and_resumes(tmp_path):
     assert second == {"skipped_existing": 1, "skipped_not_ok": 1}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_cache.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.data.cache'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/meld_emotion/data/cache.py`:
 
@@ -1940,12 +1940,12 @@ def build_split_cache(split: str, face_encoder, scene_encoder,
     return counts
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_cache.py -v`
 Expected: 5 passed
 
-- [ ] **Step 5: Add the CLI driver**
+- [x] **Step 5: Add the CLI driver**
 
 Create `scripts/build_feature_cache.py`:
 
@@ -1988,13 +1988,13 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 6: Smoke-test the CLI against the slice preprocessed in Task 7**
+- [x] **Step 6: Smoke-test the CLI against the slice preprocessed in Task 7**
 
 Run: `uv run python scripts/build_feature_cache.py --split dev`
 Expected: `Done in ... min: {'cached': 40} -> .../data/meld/features/dev` (matching however many clips Task 7 Step 8 preprocessed) and `data/meld/features/dev/` contains that many `.npz` files.
 Run it again: expected `{'skipped_existing': 40}` in well under a second of work.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/meld_emotion/data/cache.py tests/test_cache.py scripts/build_feature_cache.py
@@ -2036,7 +2036,7 @@ zero-face clip rate, shot-cut rate.
   `clips_with_a_cut_fraction`, `shot_cuts_per_frame` (the last four over
   `ok` rows only).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_manifest.py`:
 
@@ -2116,12 +2116,12 @@ def test_write_and_read_manifest_round_trip(tmp_path):
     assert read_manifest(out) == rows
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_manifest.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'meld_emotion.data.manifest'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/meld_emotion/data/manifest.py`:
 
@@ -2203,12 +2203,12 @@ def manifest_stats(rows: list[dict]) -> dict:
     }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_manifest.py -v`
 Expected: 4 passed
 
-- [ ] **Step 5: Add the CLI driver**
+- [x] **Step 5: Add the CLI driver**
 
 Create `scripts/build_manifest.py`:
 
@@ -2249,17 +2249,17 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 6: Smoke-test against the slice cached in Task 9**
+- [x] **Step 6: Smoke-test against the slice cached in Task 9**
 
 Run: `uv run python scripts/build_manifest.py --split dev`
 Expected: `Wrote 1109 rows -> .../features/dev/manifest.jsonl`, then a stats JSON whose `status` shows `"ok": 40` (the Task 7/9 slice), `"not_preprocessed"` for the rest, and `"missing_video": 1` (`dia110_utt7`). `faces_per_frame` should be a plausible 1–3 for those 40 clips.
 
-- [ ] **Step 7: Run the complete offline suite one last time**
+- [x] **Step 7: Run the complete offline suite one last time**
 
 Run: `uv run pytest -v`
 Expected: every test in Tasks 1–7, 9, 10 passes; Task 8's 5 tests deselected; total wall-clock a few seconds.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/meld_emotion/data/manifest.py tests/test_manifest.py scripts/build_manifest.py

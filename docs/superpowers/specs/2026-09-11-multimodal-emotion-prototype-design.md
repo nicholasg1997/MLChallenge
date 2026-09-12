@@ -364,23 +364,32 @@ test 2,610/2,610, dev 1,108/1,109 — `dia110_utt7` has no file and is dropped.
 The archive also contains a few unreferenced mp4s (dev: 1,112 files, test:
 2,615); they are ignored.
 
-**Timestamps are redundant, not unreliable — ignore them anyway.**
-`EndTime − StartTime` in the test CSV ranges from 0.0s to 304.94s. The
-304.94s row (`dia38_utt4`) was suspected to be a bad timestamp, but the
-*correctly split-scoped* file (`output_repeated_splits_test/dia38_utt4.mp4`)
-is 7,312 frames at ~24fps — 304.97s, matching the CSV almost exactly. It's a
-genuine outlier-length utterance, not a data error. (The 2.38s/57-frame
-figure floated during investigation came from `train_splits/dia38_utt4.mp4`
-instead — the cross-split ID collision above catching out the very check
-looking for it.) Since every clip is already pre-cut to its labeled span,
-the loader takes duration from the container and never parses the CSV
-timestamps regardless — one less thing to get wrong, not a correction for
-bad data. A 15s decode cap remains as a guard against outliers like this one
-consuming disproportionate preprocessing time.
+**Clip boundaries — a small number of clips are mis-cut.** The CSV
+`StartTime`/`EndTime` columns are never read: every clip is pre-cut, so the
+loader takes duration from the container. But the official clips were cut
+*from* those timestamps, so where a timestamp is wrong the clip is wrong
+too. A scan of all 13,707 referenced files: median clip 2.46s, p95 7.9s,
+p99 11.8s — and **37 clips exceed 15s**. Most of those are genuine long
+lines (dev's six are 15–29s carrying 17–22 words each) that the 15s decode
+cap simply truncates; a few are clearly mis-cut (`test/dia38_utt4` is 305s
+of footage for the 7-word "Oh it's great, it's a role on";
+`test/dia220_utt0` is 235s for "What's that smell?"). At the other end,
+**404 clips are under 0.5s**, 63 of which carry ≥5 words that cannot fit in
+1–2 frames. For the clearly mis-cut rows (well under 1%) the text and label
+are correct but the vision signal is noise. Preprocessing caps decoding at
+15s (a 305s clip costs 45 sampled frames, not 900), and the manifest records
+every clip's container `duration_s` and `n_frames` so training can treat
+implausible clips as vision-missing — the same condition modality dropout
+(§4.3) already trains for. (An earlier revision of this document called `dia38_utt4` a 2.38s file
+and then a "genuine outlier utterance"; both were wrong — the first was the
+cross-split ID collision above catching out the check looking for it.)
 
-**Decodability.** 450 randomly sampled files (150 per split) all decode with
-OpenCV. The preprocessing pass logs and drops any clip that fails rather than
-assuming this holds for all 13,708.
+**Decodability and format.** All 13,707 referenced files open and decode
+except `train/dia125_utt3` (truncated container, "moov atom not found"),
+which preprocessing records as `decode_failed` and training drops. 13,630
+clips are 1280×720 at 23.98fps; 67 run at 25fps and 76 are 496×384 or
+560×432 — letterboxing and the detector's per-frame input size handle both
+without special-casing.
 
 **Class imbalance (train).** neutral 47.2%, joy 17.4%, surprise 12.1%, anger
 11.1%, sadness 6.8%, disgust 2.7%, fear 2.7%.
@@ -570,6 +579,13 @@ Trained by us:
   vision encoders (Stage 1) limit the model's ability to learn actor→emotion
   priors; Stage 2 unfreezing raises that risk, and only the other-show
   stretch test would expose it.
+- **Mis-cut and truncated clips.** A few MELD clips are cut to the wrong
+  span — two run 4–5 minutes for a one-line utterance, ~63 are too short to
+  contain their words (§5) — and 37 clips longer than 15s are truncated by
+  the decode cap. Labels and text are used for all of them; for the mis-cut
+  ones the vision tokens are noise, which modality dropout tolerates but
+  does not fix. The manifest's `duration_s`/`n_frames` let training mask
+  them explicitly; whether that helps is a cheap ablation.
 - Speaker names are unused for path parity (§4.3), forfeiting a known small
   gain on MELD.
 - Live path: ASR errors propagate into the text signal; the dialogue context

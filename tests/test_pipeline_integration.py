@@ -61,3 +61,4 @@ def test_full_pipeline_from_real_preprocess_output_through_cache_to_manifest(tmp
     assert row["feature_path"] == str(out_path.relative_to(cache_dir))
     assert row["n_frames"] == expected_n_frames
     assert row["n_faces"] == expected_n_faces
+    assert row["duration_s"] == 1.0              # 24-frame synthetic video @ 24fps

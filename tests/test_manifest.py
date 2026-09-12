@@ -14,7 +14,7 @@ def _fixture(tmp_path):
     ok_dir = pre / "dev" / "dia0_utt0"
     ok_dir.mkdir(parents=True)
     with open(ok_dir / "metadata.json", "w") as f:
-        json.dump({"status": "ok", "n_shot_cuts": 1, "frames": [
+        json.dump({"status": "ok", "fps": 24.0, "total_frames": 48, "n_shot_cuts": 1, "frames": [
             {"sample_index": 0, "shot_cut": False, "faces": [{"track_id": 0}, {"track_id": 1}]},
             {"sample_index": 1, "shot_cut": True, "faces": []},
         ]}, f)
@@ -37,6 +37,8 @@ def test_manifest_rows_carry_status_context_paths_and_counts(tmp_path):
     assert rows[0]["feature_path"] == "dev/dia0_utt0.npz"
     assert rows[1]["feature_path"] is None
     assert (rows[0]["n_frames"], rows[0]["n_faces"], rows[0]["n_shot_cuts"]) == (2, 2, 1)
+    assert rows[0]["duration_s"] == 2.0          # 48 frames @ 24fps, from the container
+    assert rows[1]["duration_s"] == 0.0          # decode_failed: no fps to divide by
     assert rows[0]["context_prev"] == []
     assert rows[2]["context_prev"] == ["t0", "t1"]
     assert rows[2]["text"] == "t2" and rows[2]["emotion"] == "joy" and rows[2]["sentiment"] == "positive"
@@ -62,6 +64,7 @@ def test_manifest_stats(tmp_path):
     assert stats["zero_face_clip_fraction"] == pytest.approx(0.0)
     assert stats["clips_with_a_cut_fraction"] == pytest.approx(1.0)
     assert stats["shot_cuts_per_frame"] == pytest.approx(0.5)
+    assert stats["truncated_clips"] == 0
 
 
 def test_write_and_read_manifest_round_trip(tmp_path):

@@ -19,7 +19,7 @@ from meld_emotion.vision.face_detector import build_face_detector, detect_faces
 from meld_emotion.vision.tracker import SHOT_CUT_THRESHOLD, FaceTracker, shot_change_score
 
 SAMPLE_FPS = 3.0
-MAX_DECODE_SECONDS = 15.0  # guard only: MELD clips are pre-cut (design doc §5)
+MAX_DECODE_SECONDS = 15.0  # 37 MELD clips run 15-305s; the extreme ones are mis-cut for a one-line utterance (design doc §5)
 CROP_SIZE = 224
 FACE_MARGIN = 0.2
 

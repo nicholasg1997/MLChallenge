@@ -7,7 +7,7 @@ from pathlib import Path
 
 from meld_emotion.data.cache import cache_path_for
 from meld_emotion.data.labels import Utterance, context_window, group_by_dialogue
-from meld_emotion.data.preprocess import clip_dir_for
+from meld_emotion.data.preprocess import MAX_DECODE_SECONDS, clip_dir_for
 
 CONTEXT_MAX = 8  # previous utterances stored; training slices context_prev[-k:] for any k <= 8
 
@@ -24,12 +24,17 @@ def build_manifest(split: str, utterances: list[Utterance], index: dict[tuple[in
             "split": split, "dialogue_id": u.dialogue_id, "utterance_id": u.utterance_id,
             "speaker": u.speaker, "text": u.text, "context_prev": window[:-1],
             "emotion": u.emotion, "sentiment": u.sentiment,
-            "status": None, "feature_path": None, "n_frames": 0, "n_faces": 0, "n_shot_cuts": 0,
+            "status": None, "feature_path": None, "duration_s": 0.0,
+            "n_frames": 0, "n_faces": 0, "n_shot_cuts": 0,
         }
         meta_path = clip_dir / "metadata.json"
         if meta_path.exists():
             with open(meta_path) as f:
                 meta = json.load(f)
+            fps = meta.get("fps") or 0.0
+            # Container duration, not the CSV's. Rows far above MAX_DECODE_SECONDS or
+            # far below their word count are mis-cut clips whose vision is unreliable.
+            row["duration_s"] = round(meta.get("total_frames", 0) / fps, 2) if fps else 0.0
             row["n_frames"] = len(meta["frames"])
             row["n_faces"] = sum(len(frame["faces"]) for frame in meta["frames"])
             row["n_shot_cuts"] = meta.get("n_shot_cuts", 0)
@@ -72,4 +77,5 @@ def manifest_stats(rows: list[dict]) -> dict:
         "zero_face_clip_fraction": sum(1 for r in ok if r["n_faces"] == 0) / len(ok) if ok else 0.0,
         "clips_with_a_cut_fraction": sum(1 for r in ok if r["n_shot_cuts"] > 0) / len(ok) if ok else 0.0,
         "shot_cuts_per_frame": n_cuts / n_frames if n_frames else 0.0,
+        "truncated_clips": sum(1 for r in ok if r["duration_s"] > MAX_DECODE_SECONDS),
     }
