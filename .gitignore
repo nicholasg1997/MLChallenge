@@ -9,3 +9,6 @@ __pycache__/
 # src/meld_emotion/data/, silently requiring `git add -f` for every source file there.
 /data/
 /models/
+
+# Training outputs (checkpoints, logs, results.json) -- reproducible via scripts/train_meld.py
+/results/
