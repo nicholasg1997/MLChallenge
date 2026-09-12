@@ -5,5 +5,7 @@ __pycache__/
 .worktrees/
 
 # Downloaded/generated data and model weights -- reproducible via scripts/, not tracked.
-data/
-models/
+# Anchored to the repo root (leading slash): an unanchored "data/" also matches
+# src/meld_emotion/data/, silently requiring `git add -f` for every source file there.
+/data/
+/models/
