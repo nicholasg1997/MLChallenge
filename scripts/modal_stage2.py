@@ -22,9 +22,9 @@ results = modal.Volume.from_name("meld-results", create_if_missing=True)
 hf_cache = modal.Volume.from_name("meld-hf-cache", create_if_missing=True)
 
 
-@app.function(image=image, gpu="A10G", cpu=8, memory=24576, timeout=4 * 3600,
+@app.function(image=image, gpu="A10G", cpu=4, memory=16384, timeout=4 * 3600,   # CPU/RAM are billed too
               volumes={"/vol": features, "/crops": crops, "/out": results, "/root/.cache/huggingface": hf_cache})
-def run(base: str, seed: int, eval_test: bool = False, epochs: int | None = None) -> dict:
+def run(base: str, seed: int, eval_test: bool = False, epochs: int | None = None, patience: int | None = None) -> dict:
     import os, subprocess, time
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     from meld_emotion.training.config import stage2_config
@@ -35,7 +35,8 @@ def run(base: str, seed: int, eval_test: bool = False, epochs: int | None = None
         subprocess.run(["tar", "-xf", f"/crops/crops_{split}.tar", "-C", "/tmp"], check=True)
     print(f"crops extracted in {time.perf_counter() - started:.0f}s", flush=True)
 
-    overrides = {"seed": seed, "device": "cuda", "loader_workers": 6, **({"epochs": epochs} if epochs else {})}
+    overrides = {"seed": seed, "device": "cuda", "loader_workers": 4,
+                 **({"epochs": epochs} if epochs else {}), **({"patience": patience} if patience else {})}
     config = stage2_config(base, **overrides)
     out_dir = f"/out/{config.name}/seed{seed}"
     r = train_stage2(config, "/vol/features", "/tmp", out_dir, init_from=f"/out/{base}/seed0/best.pt",
@@ -48,8 +49,8 @@ def run(base: str, seed: int, eval_test: bool = False, epochs: int | None = None
 
 
 @app.local_entrypoint()
-def main(bases: str = "fusion", seeds: str = "0", eval_test: bool = False, epochs: int = 0):
-    jobs = [(b, int(s), eval_test, epochs or None) for b in bases.split(",") for s in seeds.split(",")]
+def main(bases: str = "fusion", seeds: str = "0", eval_test: bool = False, epochs: int = 0, patience: int = 0):
+    jobs = [(b, int(s), eval_test, epochs or None, patience or None) for b in bases.split(",") for s in seeds.split(",")]
     print(f"launching {len(jobs)} Stage 2 run(s) on A10G: {jobs}")
     for out in run.starmap(jobs):
         print(out)
