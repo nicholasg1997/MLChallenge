@@ -4,6 +4,7 @@ final LayerNorm) keep activations and gradients. Output = the post-LayerNorm
 CLS feature, exactly what Stage 1 cached."""
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 from transformers import AutoModelForImageClassification
 
 from meld_emotion.vision.encoders import FACE_MODEL_ID
@@ -21,8 +22,13 @@ def _run_layer(layer: nn.Module, h: torch.Tensor) -> torch.Tensor:
 
 
 class TrainableFaceEncoder(nn.Module):
-    def __init__(self, model_id: str = FACE_MODEL_ID, trainable_layers: int = 4):
+    """`chunk_size` crops go through the top layers at a time, with activation
+    checkpointing in training, so peak memory is bounded by one chunk: a
+    16-clip batch can hold 1,000+ crops, which OOMed a 22 GB A10G unchunked."""
+
+    def __init__(self, model_id: str = FACE_MODEL_ID, trainable_layers: int = 4, chunk_size: int = 256):
         super().__init__()
+        self.chunk_size = chunk_size
         model = AutoModelForImageClassification.from_pretrained(model_id, attn_implementation="eager")
         self.model = model                      # kept whole so export_state() matches FaceEmotionEncoder.model
         self.vit = model.vit
@@ -43,17 +49,25 @@ class TrainableFaceEncoder(nn.Module):
     def export_state(self) -> dict:
         return {k: v.detach().cpu() for k, v in self.model.state_dict().items()}
 
-    def forward(self, pixels_uint8: torch.Tensor) -> torch.Tensor:
-        if pixels_uint8.shape[0] == 0:
-            return torch.zeros((0, self.feature_dim), device=pixels_uint8.device)
-        x = normalize_pixels(pixels_uint8)
-        with torch.no_grad():
-            h = self.vit.embeddings(x)
-            for layer in self.vit.layers[:self.n_frozen]:
-                h = _run_layer(layer, h)
+    def _top(self, h: torch.Tensor) -> torch.Tensor:
         for layer in self.vit.layers[self.n_frozen:]:
             h = _run_layer(layer, h)
         return self.vit.layernorm(h)[:, 0]
+
+    def forward(self, pixels_uint8: torch.Tensor) -> torch.Tensor:
+        if pixels_uint8.shape[0] == 0:
+            return torch.zeros((0, self.feature_dim), device=pixels_uint8.device)
+        outs = []
+        for chunk in pixels_uint8.split(self.chunk_size):
+            with torch.no_grad():
+                h = self.vit.embeddings(normalize_pixels(chunk))
+                for layer in self.vit.layers[:self.n_frozen]:
+                    h = _run_layer(layer, h)
+            if self.training and torch.is_grad_enabled():
+                outs.append(checkpoint(self._top, h, use_reentrant=False))
+            else:
+                outs.append(self._top(h))
+        return torch.cat(outs)
 
 
 def scatter_faces(feats: torch.Tensor, batch_idx: torch.Tensor, slot: torch.Tensor, B: int, fmax: int) -> torch.Tensor:

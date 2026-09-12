@@ -25,7 +25,8 @@ hf_cache = modal.Volume.from_name("meld-hf-cache", create_if_missing=True)
 @app.function(image=image, gpu="A10G", cpu=8, memory=24576, timeout=4 * 3600,
               volumes={"/vol": features, "/crops": crops, "/out": results, "/root/.cache/huggingface": hf_cache})
 def run(base: str, seed: int, eval_test: bool = False, epochs: int | None = None) -> dict:
-    import subprocess, time
+    import os, subprocess, time
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     from meld_emotion.training.config import stage2_config
     from meld_emotion.training.train_stage2 import train_stage2
 

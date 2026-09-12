@@ -31,6 +31,9 @@ def test_trainable_face_encoder_matches_the_pretrained_forward_and_trains_only_t
         ours = enc(pixels)
         theirs = ref.model.vit(pixel_values=normalize_pixels(pixels)).last_hidden_state[:, 0]
     assert ours.shape == (2, 768) and torch.allclose(ours, theirs, atol=1e-4)
+    enc.chunk_size = 1                                   # chunked path must give the same features
+    with torch.no_grad():
+        assert torch.allclose(enc(pixels), theirs, atol=1e-4)
     assert sum(p.numel() for p in enc.trainable_parameters()) == 28_353_024
     enc.train()
     enc(pixels).sum().backward()
