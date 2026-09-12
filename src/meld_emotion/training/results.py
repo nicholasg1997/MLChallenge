@@ -5,7 +5,8 @@ import statistics
 from pathlib import Path
 
 ORDER = ["vision_only_zero_training", "text_only_k0", "text_only_k4", "vision_only", "fusion",
-         "fusion_no_scene", "fusion_no_context", "fusion_no_trackid", "fusion_faces_only"]
+         "fusion_no_scene", "fusion_no_context", "fusion_no_trackid", "fusion_faces_only",
+         "stage2_fusion", "stage2_fusion_no_scene", "stage2_fusion_faces_only", "stage2_fusion_no_trackid"]
 
 
 def collect_results(results_dir: Path) -> list[dict]:
