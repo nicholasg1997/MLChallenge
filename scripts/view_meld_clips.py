@@ -21,7 +21,7 @@ import textwrap
 import cv2
 
 from meld_emotion.config import (
-    LABELS_DIR, RAW_EXTRACTED_DIR, FACE_DETECTOR_MODEL_PATH as FACE_MODEL_PATH, SPLIT_DIRS,
+    LABELS_DIR, FACE_DETECTOR_MODEL_PATH as FACE_MODEL_PATH, SPLITS, split_video_dir,
 )
 from meld_emotion.data.video_index import build_video_index
 from meld_emotion.vision.face_detector import build_face_detector, detect_faces
@@ -54,8 +54,6 @@ def sample_rows(rows, per_emotion, seed):
         sampled.extend(rng.sample(group, min(per_emotion, len(group))))
     rng.shuffle(sampled)
     return sampled
-
-
 
 
 def play_clip(path, row, detector=None):
@@ -124,7 +122,7 @@ def play_clip(path, row, detector=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--split", choices=["train", "dev", "test"], default="dev")
+    parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--per-emotion", type=int, default=2, help="clips to sample per emotion class")
     parser.add_argument("--emotion", help="only sample this emotion")
     parser.add_argument("--seed", type=int, default=None)
@@ -132,7 +130,7 @@ def main():
                          help="overlay face detection boxes + a per-frame face count")
     args = parser.parse_args()
 
-    split_dir = RAW_EXTRACTED_DIR / SPLIT_DIRS[args.split]
+    split_dir = split_video_dir(args.split)
     if not split_dir.exists():
         sys.exit(f"Split directory not found: {split_dir}\n"
                   f"Run scripts/extract_meld_raw.sh first.")
