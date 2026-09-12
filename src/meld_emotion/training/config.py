@@ -69,6 +69,9 @@ ABLATIONS: dict[str, TrainConfig] = {
     "fusion_no_scene": TrainConfig(name="fusion_no_scene", use_scene=False),
     "fusion_no_context": TrainConfig(name="fusion_no_context", context_k=0),
     "fusion_no_trackid": TrainConfig(name="fusion_no_trackid", use_track_id=False),
+    # Stage 1 found the scene token and track-ID embedding each slightly negative at one seed;
+    # this preset tests whether the two removals stack.
+    "fusion_faces_only": TrainConfig(name="fusion_faces_only", use_scene=False, use_track_id=False),
 }
 
 

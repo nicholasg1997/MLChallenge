@@ -13,7 +13,7 @@ def test_default_config_is_the_full_fusion_model():
 def test_every_ablation_preset_is_named_after_its_key():
     from meld_emotion.training.config import ABLATIONS
     assert set(ABLATIONS) == {"text_only_k0", "text_only_k4", "vision_only", "fusion",
-                              "fusion_no_scene", "fusion_no_context", "fusion_no_trackid"}
+                              "fusion_no_scene", "fusion_no_context", "fusion_no_trackid", "fusion_faces_only"}
     for key, cfg in ABLATIONS.items():
         assert cfg.name == key
 
@@ -27,6 +27,8 @@ def test_presets_flip_exactly_the_intended_switches():
     assert not ABLATIONS["fusion_no_scene"].use_scene
     assert ABLATIONS["fusion_no_context"].context_k == 0
     assert not ABLATIONS["fusion_no_trackid"].use_track_id
+    faces_only = ABLATIONS["fusion_faces_only"]
+    assert (faces_only.use_text, faces_only.use_faces, faces_only.use_scene, faces_only.use_track_id) == (True, True, False, False)
 
 
 def test_config_for_applies_overrides_without_mutating_the_preset():
