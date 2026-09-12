@@ -23,6 +23,7 @@ import cv2
 from meld_emotion.config import (
     LABELS_DIR, RAW_EXTRACTED_DIR, FACE_DETECTOR_MODEL_PATH as FACE_MODEL_PATH, SPLIT_DIRS,
 )
+from meld_emotion.data.video_index import build_video_index
 
 CONFIDENCE_THRESHOLD = 0.75  # Confidence threshold for facial recognition
 
@@ -42,22 +43,6 @@ def load_rows(split):
     path = LABELS_DIR / f"{split}_sent_emo.csv"
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
-
-
-def build_video_index(split_dir):
-    """Map (dialogue_id, utterance_id) -> path by scanning ONE split's directory
-    for dia<D>_utt<U>.* files. Must be scoped to a single split -- see the
-    SPLIT_DIRS comment above for why a global index across splits is wrong.
-    """
-    index = {}
-    for p in split_dir.glob("dia*_utt*.*"):
-        try:
-            dia_part, utt_part = p.stem.split("_")
-            key = (int(dia_part.replace("dia", "")), int(utt_part.replace("utt", "")))
-        except ValueError:
-            continue
-        index[key] = p
-    return index
 
 
 def sample_rows(rows, per_emotion, seed):
