@@ -110,6 +110,21 @@ def test_bucket_sampler_is_deterministic_per_epoch_and_sorted_when_not_shuffling
     assert [lengths[i] for batch in ordered for i in batch] == sorted(lengths)
 
 
+def test_preloaded_and_lazy_datasets_yield_identical_items(synthetic_features):
+    from meld_emotion.training.config import TrainConfig
+    from meld_emotion.training.dataset import MeldFeatureDataset, load_ok_rows
+    root, train, _ = synthetic_features
+    rows = load_ok_rows(train)
+    eager = MeldFeatureDataset(rows, root, TrainConfig(), whitespace_encode, preload=True)
+    lazy = MeldFeatureDataset(rows, root, TrainConfig(), whitespace_encode, preload=False)
+    assert eager.features is not None and len(eager.features) == len(rows) and lazy.features is None
+    for i in (0, 5, 6, len(rows) - 1):
+        a, b = eager[i], lazy[i]
+        assert a.keys() == b.keys()
+        for k in a:
+            assert (a[k] == b[k]) if k == "clip" else torch.equal(a[k], b[k]), k
+
+
 def test_collate_pads_and_masks_variable_length_sets(synthetic_features):
     from meld_emotion.training.config import TrainConfig
     from meld_emotion.training.dataset import MeldFeatureDataset, collate, load_ok_rows

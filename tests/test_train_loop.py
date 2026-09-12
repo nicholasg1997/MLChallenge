@@ -81,6 +81,16 @@ def test_train_text_only_and_vision_only_presets_run(synthetic_features, tmp_pat
     assert r2["dev"]["emotion"]["n"] == 14
 
 
+def test_on_epoch_end_is_called_once_per_epoch_with_the_log_record(synthetic_features, tmp_path):
+    from meld_emotion.training.train import train
+    root, _, _ = synthetic_features
+    seen = []
+    train(_cfg(epochs=2), root, tmp_path / "cb", encode_fn=whitespace_encode, text_encoder=StubTextEncoder(32),
+          pad_id=1, log=lambda *_: None, on_epoch_end=seen.append)
+    assert [r["epoch"] for r in seen] == [1, 2]
+    assert all("dev_weighted_f1" in r for r in seen)
+
+
 def test_max_train_rows_limits_the_training_set(synthetic_features, tmp_path):
     from meld_emotion.training.train import train
     root, _, _ = synthetic_features

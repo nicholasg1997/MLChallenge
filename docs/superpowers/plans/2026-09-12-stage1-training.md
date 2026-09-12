@@ -2268,6 +2268,16 @@ git add scripts/modal_train.py
 git commit -m "Add Modal A10G runner for Stage 1 ablations (same train(), parallel over ablations x seeds)"
 ```
 
+**Post-implementation fix (2026-09-12).** The first Modal run showed 0% GPU
+utilisation and never finished an epoch. Cause: Task 3's `__getitem__` did
+one `np.load` per clip, which is ~1 ms on a local SSD but a network
+round-trip on a Modal Volume, and with `num_workers=0` nothing overlapped
+the GPU. `MeldFeatureDataset` now preloads a split's arrays once with a
+16-thread pool (`preload=True`; 4.5 s / 772 MB for train locally) and
+`train()` gained an `on_epoch_end` callback that the Modal runner uses to
+`results.commit()` after every epoch, so `log.jsonl`/`best.pt` survive a
+killed container.
+
 ---
 
 ## Running Stage 1 for real

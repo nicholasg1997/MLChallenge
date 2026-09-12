@@ -104,7 +104,10 @@ def load_checkpoint(path: Path, model: FusionModel) -> dict:
 def train(config: TrainConfig, features_dir: Path, out_dir: Path, *,
           train_split: str = "train", dev_split: str = "dev", test_split: str | None = None,
           encode_fn=None, text_encoder=None, pad_id: int | None = None,
-          max_train_rows: int | None = None, log=print) -> dict:
+          max_train_rows: int | None = None, log=print, on_epoch_end=None) -> dict:
+    """`on_epoch_end(record)` is called after each epoch's log line and
+    checkpoint are written -- the Modal runner uses it to commit the results
+    volume so progress survives a killed container."""
     features_dir, out_dir = Path(features_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(config.device)
@@ -185,9 +188,11 @@ def train(config: TrainConfig, features_dir: Path, out_dir: Path, *,
                         "dev_weighted_f1": dev_f1, "face_dim": face_dim, "scene_dim": scene_dim}, out_dir / "best.pt")
         else:
             epochs_without_gain += 1
-            if epochs_without_gain >= config.patience:
-                log(f"  early stop: no dev improvement for {config.patience} epochs")
-                break
+        if on_epoch_end is not None:
+            on_epoch_end(record)
+        if epochs_without_gain >= config.patience:
+            log(f"  early stop: no dev improvement for {config.patience} epochs")
+            break
 
     # --- final evaluation from the best checkpoint ---
     load_checkpoint(out_dir / "best.pt", model)
