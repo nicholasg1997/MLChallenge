@@ -7,9 +7,10 @@ Usage:
     uv run python scripts/build_feature_cache.py --split dev
 """
 import argparse
+import sys
 import time
 
-from meld_emotion.config import FEATURE_CACHE_DIR, SPLITS
+from meld_emotion.config import FEATURE_CACHE_DIR, PREPROCESSED_DIR, SPLITS
 from meld_emotion.data.cache import build_split_cache
 from meld_emotion.vision.encoders import FaceEmotionEncoder, SceneEncoder, default_device
 
@@ -21,6 +22,11 @@ def main():
     parser.add_argument("--device", default=default_device(), help="'mps' or 'cpu'")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+
+    split_dir = PREPROCESSED_DIR / args.split
+    if not split_dir.exists() or not any(p.is_dir() for p in split_dir.iterdir()):
+        sys.exit(f"No preprocessed clips found under {split_dir}\n"
+                  f"Run this first: uv run python scripts/preprocess_meld.py --split {args.split}")
 
     print(f"Loading encoders on {args.device}...")
     face_encoder = FaceEmotionEncoder(device=args.device)

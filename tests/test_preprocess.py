@@ -139,13 +139,15 @@ def test_preprocess_split_counts_ok_and_missing_videos(tmp_path):
 
 
 def test_preprocess_clip_finds_the_ensemble_faces_in_a_real_clip(tmp_path):
-    from meld_emotion.config import split_video_dir
+    from meld_emotion.config import FACE_DETECTOR_MODEL_PATH, split_video_dir
     from meld_emotion.data.video_index import build_video_index
     from meld_emotion.data.preprocess import preprocess_clip
 
     dev_dir = split_video_dir("dev")
     if not dev_dir.exists():
         pytest.skip("requires the extracted MELD dataset (see scripts/extract_meld_raw.sh)")
+    if not FACE_DETECTOR_MODEL_PATH.exists():
+        pytest.skip("requires the face detector weights (see scripts/download_face_model.sh)")
 
     # dev dia1_utt1 was verified (with the per-split index) to be a Central Perk
     # ensemble shot with 6-7 faces per sampled frame.
