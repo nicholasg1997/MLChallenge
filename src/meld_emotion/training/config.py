@@ -47,6 +47,15 @@ class TrainConfig:
     seed: int = 0
     device: str = "auto"                     # "auto" -> mps if available else cpu
 
+    # --- Stage 2: face encoder in the loop (design doc §6). 0 = Stage 1 (cached features) ---
+    face_trainable_layers: int = 0          # top N of the 12 ViT layers (+ final LayerNorm)
+    lr_face: float = 1e-5
+    max_faces_per_clip: int = 64            # p99 is ~95; uniform subsample keeps frame coverage
+    face_augment: bool = True               # random resized crop / flip / colour jitter on train crops
+    init_from: str | None = None            # Stage 1 checkpoint to initialise everything but the ViT
+    loader_workers: int = 0                 # DataLoader workers for JPEG decoding (Modal: 6)
+    amp_bf16: bool = True                   # bf16 autocast on CUDA only
+
     def __post_init__(self):
         if not (self.use_text or self.use_faces or self.use_scene):
             raise ValueError("at least one modality must be enabled")
@@ -79,3 +88,13 @@ def config_for(name: str, **overrides) -> TrainConfig:
     if name not in ABLATIONS:
         raise KeyError(f"unknown ablation {name!r}; choose from {sorted(ABLATIONS)}")
     return replace(ABLATIONS[name], **overrides)
+
+
+def stage2_config(base: str, **overrides) -> TrainConfig:
+    """Stage 2 preset derived from a Stage 1 preset: same modalities, the face
+    ViT's top 4 layers trainable, initialised from that preset's seed-0 run."""
+    if base not in ABLATIONS or base.startswith("text_only"):
+        raise KeyError(f"Stage 2 needs a Stage 1 preset that uses faces; got {base!r}")
+    defaults = dict(name=f"stage2_{base}", face_trainable_layers=4, batch_size=16, epochs=8,
+                    lr_text=1e-5, init_from=f"results/{base}/seed0/best.pt")
+    return replace(ABLATIONS[base], **{**defaults, **overrides})
