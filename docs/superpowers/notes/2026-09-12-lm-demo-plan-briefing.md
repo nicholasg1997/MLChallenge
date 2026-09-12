@@ -76,14 +76,22 @@ whole file and writes JPEGs):
 
 ## 4. Facts that will bite (all verified)
 
-- **The frozen face head's raw probabilities are prior-skewed on MELD.** It
-  almost never says "neutral" on talking faces (0.10 on true-neutral dev
-  clips) and defaults to sad/joy; raw argmax scores wF1 0.12 on dev, below
-  always-neutral. The §2 *provisional* state must not display these raw.
-  Compute the head's mean probability vector over the dev cache once
-  (`face_probs` in the `.npz` files), store it as a small JSON, and show
-  `p / prior` renormalised (or the top-2 relative to prior). Say in the
-  plan that this is a calibration, not a learned component.
+- **Do not use the face head's probabilities for anything.** They were
+  prior-skewed even in Stage 1 (wF1 0.12 on dev) and after Stage 2 the head
+  is stale (it was trained on the old CLS). The §2 provisional state is the
+  fusion model with text masked — `model(batch, force_drop_text=True)` over
+  the visual tokens accumulated so far — and the gloss's per-face labels
+  (§4.4 b) become that same vision-only prediction's top-2 for the clip.
+- **The submitted checkpoint is `results/stage2_fusion_faces_only/seed1/best.pt`**
+  (Stage 2; dev wF1 0.634, test 0.642). Its config has `use_scene=False`
+  and `use_track_id=False`: the classifier takes text + face tokens only, so
+  the demo does not need CLIP or the tracker's IDs for *prediction* (the
+  tracker is still used for drawing boxes; CLIP is only needed if the gloss
+  keeps its scene cues). Load with `TrainConfig(**ckpt["config"])`,
+  `FusionModel(...)` + `load_state_dict(ckpt["model_state"])`, and
+  `FaceEmotionEncoder(weights_path=<that best.pt>)` for the fine-tuned ViT.
+  The batch-path predictions for the consistency check are in
+  `results/stage2_fusion_faces_only/seed1/test_predictions.jsonl`.
 - **CLIP under transformers 5:** `model.get_text_features(...)` and
   `get_image_features(...)` return `BaseModelOutputWithPooling`; take
   `.pooler_output` (512-d). Neither is L2-normalised — normalise both sides
