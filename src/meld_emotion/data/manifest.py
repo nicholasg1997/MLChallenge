@@ -12,7 +12,7 @@ from meld_emotion.data.preprocess import clip_dir_for
 CONTEXT_MAX = 8  # previous utterances stored; training slices context_prev[-k:] for any k <= 8
 
 
-def build_manifest(split: str, utterances: list[Utterance], index: dict,
+def build_manifest(split: str, utterances: list[Utterance], index: dict[tuple[int, int], Path],
                    preprocessed_dir: Path, cache_dir: Path) -> list[dict]:
     by_dialogue = group_by_dialogue(utterances)
     rows = []
@@ -27,11 +27,7 @@ def build_manifest(split: str, utterances: list[Utterance], index: dict,
             "status": None, "feature_path": None, "n_frames": 0, "n_faces": 0, "n_shot_cuts": 0,
         }
         meta_path = clip_dir / "metadata.json"
-        if (u.dialogue_id, u.utterance_id) not in index:
-            row["status"] = "missing_video"
-        elif not meta_path.exists():
-            row["status"] = "not_preprocessed"
-        else:
+        if meta_path.exists():
             with open(meta_path) as f:
                 meta = json.load(f)
             row["n_frames"] = len(meta["frames"])
@@ -44,6 +40,10 @@ def build_manifest(split: str, utterances: list[Utterance], index: dict,
             else:
                 row["status"] = "ok"
                 row["feature_path"] = str(npz_path.relative_to(cache_dir))
+        elif (u.dialogue_id, u.utterance_id) not in index:
+            row["status"] = "missing_video"
+        else:
+            row["status"] = "not_preprocessed"
         rows.append(row)
     return rows
 

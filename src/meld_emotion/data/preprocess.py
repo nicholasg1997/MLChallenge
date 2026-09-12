@@ -105,6 +105,7 @@ def preprocess_clip(video_path: Path, split: str, dialogue_id: int, utterance_id
     frames_meta = []
     n_shot_cuts = 0
 
+    clip_dir.mkdir(parents=True, exist_ok=True)
     frame_idx = -1
     while frame_idx < last_wanted:
         ret, frame = cap.read()
@@ -130,13 +131,11 @@ def preprocess_clip(video_path: Path, split: str, dialogue_id: int, utterance_id
             if crop is None:
                 continue
             face_name = f"frame{sample_i}_face{track_id}.jpg"
-            clip_dir.mkdir(parents=True, exist_ok=True)
             cv2.imwrite(str(clip_dir / face_name), crop)
             face_records.append({"track_id": track_id, "box": [x, y, w, h],
                                  "score": score, "path": face_name})
 
         scene_name = f"frame{sample_i}_scene.jpg"
-        clip_dir.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(clip_dir / scene_name), letterbox(frame))
 
         frames_meta.append({"sample_index": sample_i, "source_frame_index": frame_idx,
@@ -168,7 +167,8 @@ def _process_one(job: tuple) -> str:
     return meta["status"]
 
 
-def preprocess_split(split: str, utterances, index: dict, out_dir: Path = PREPROCESSED_DIR,
+def preprocess_split(split: str, utterances, index: dict[tuple[int, int], Path],
+                     out_dir: Path = PREPROCESSED_DIR,
                      workers: int = 1, overwrite: bool = False, detector=None,
                      progress_every: int = 200) -> Counter:
     """Preprocess every utterance that has a video file. `detector` is only
@@ -191,12 +191,13 @@ def preprocess_split(split: str, utterances, index: dict, out_dir: Path = PREPRO
         pool = mp.get_context("spawn").Pool(workers, initializer=_init_worker)
         results = pool.imap_unordered(_process_one, jobs, chunksize=8)
 
-    for i, status in enumerate(results, 1):
-        counts[status] += 1
-        if progress_every and i % progress_every == 0:
-            print(f"  {i}/{len(jobs)} {dict(counts)}", flush=True)
-
-    if pool is not None:
-        pool.close()
-        pool.join()
+    try:
+        for i, status in enumerate(results, 1):
+            counts[status] += 1
+            if progress_every and i % progress_every == 0:
+                print(f"  {i}/{len(jobs)} {dict(counts)}", flush=True)
+    finally:
+        if pool is not None:
+            pool.terminate()
+            pool.join()
     return counts

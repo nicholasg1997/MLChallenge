@@ -58,7 +58,8 @@ def build_split_cache(split: str, face_encoder, scene_encoder,
                        if (p / "metadata.json").exists())
     for i, clip_dir in enumerate(clip_dirs, 1):
         out_path = cache_path_for(cache_dir, split, clip_dir.name)
-        if out_path.exists() and not overwrite:
+        if (out_path.exists() and not overwrite
+                and out_path.stat().st_mtime >= (clip_dir / "metadata.json").stat().st_mtime):
             counts["skipped_existing"] += 1
         else:
             cache = build_clip_cache(clip_dir, face_encoder, scene_encoder)
