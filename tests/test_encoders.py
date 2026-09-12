@@ -60,3 +60,15 @@ def test_scene_encoder_shapes(scene_encoder):
     assert scene_encoder.encode_batch(_images(2)).shape == (2, 512)
     assert scene_encoder.encode(_images(1)[0]).shape == (512,)
     assert scene_encoder.encode_batch([]).shape == (0, 512)
+
+def test_face_encoder_loads_stage2_weights_from_a_checkpoint(face_encoder, tmp_path):
+    import torch
+    from meld_emotion.vision.encoders import FaceEmotionEncoder
+    state = {k: v.clone() for k, v in face_encoder.model.state_dict().items()}
+    key = "vit.layers.11.attention.q_proj.weight"
+    state[key] = state[key] + 0.01
+    torch.save({"face_encoder_state": state, "stage": 2}, tmp_path / "best.pt")
+    tuned = FaceEmotionEncoder(device="cpu", weights_path=tmp_path / "best.pt")
+    assert torch.allclose(tuned.model.state_dict()[key], state[key])
+    image = _images(1)[0]
+    assert not torch.allclose(torch.from_numpy(tuned.encode(image)["features"]), torch.from_numpy(face_encoder.encode(image)["features"]))

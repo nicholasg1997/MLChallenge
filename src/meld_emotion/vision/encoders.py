@@ -12,6 +12,8 @@
 
 Both run under torch.no_grad and are never trained in this pipeline.
 """
+from pathlib import Path
+
 import numpy as np
 import torch
 from transformers import (AutoImageProcessor, AutoModelForImageClassification,
@@ -38,7 +40,8 @@ def _chunks(items: list, size: int):
 
 
 class FaceEmotionEncoder:
-    def __init__(self, device: str | None = None, batch_size: int = DEFAULT_BATCH_SIZE):
+    def __init__(self, device: str | None = None, batch_size: int = DEFAULT_BATCH_SIZE,
+                 weights_path: "str | Path | None" = None):
         self.device = device or default_device()
         self.batch_size = batch_size
         self.processor = AutoImageProcessor.from_pretrained(FACE_MODEL_ID)
@@ -46,6 +49,12 @@ class FaceEmotionEncoder:
         if not (hasattr(self.model, "vit") and hasattr(self.model, "classifier")):
             raise TypeError(f"{FACE_MODEL_ID} loaded as {type(self.model).__name__}; "
                             f"expected ViTForImageClassification with .vit and .classifier")
+        if weights_path is not None:
+            # Stage 2 fine-tuned weights (design doc §6). The classifier head in
+            # this state is the *original* head and is stale for these features.
+            ckpt = torch.load(weights_path, map_location="cpu", weights_only=False)
+            self.model.load_state_dict(ckpt["face_encoder_state"])
+            self.model.to(self.device).eval()
         cfg = self.model.config
         self.labels = tuple(cfg.id2label[i] for i in range(cfg.num_labels))
         self.meld_labels = tuple(FACE_TO_MELD_LABEL[label] for label in self.labels)
