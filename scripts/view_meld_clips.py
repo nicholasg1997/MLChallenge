@@ -24,8 +24,7 @@ from meld_emotion.config import (
     LABELS_DIR, RAW_EXTRACTED_DIR, FACE_DETECTOR_MODEL_PATH as FACE_MODEL_PATH, SPLIT_DIRS,
 )
 from meld_emotion.data.video_index import build_video_index
-
-CONFIDENCE_THRESHOLD = 0.75  # Confidence threshold for facial recognition
+from meld_emotion.vision.face_detector import build_face_detector, detect_faces
 
 # BGR (OpenCV order), not RGB.
 EMOTION_COLORS = {
@@ -57,24 +56,6 @@ def sample_rows(rows, per_emotion, seed):
     return sampled
 
 
-def build_face_detector():
-    """Loads the OpenCV YuNet face detector (ONNX, runs on OpenCV's own DNN
-    backend -- no GPU/graph-service dependency, unlike mediapipe's Tasks API,
-    which crashes on this platform: see download_face_model.sh for why)."""
-    return cv2.FaceDetectorYN.create(str(FACE_MODEL_PATH),
-                                     "",
-                                     (320, 320),
-                                     score_threshold=CONFIDENCE_THRESHOLD)
-
-
-def detect_faces(detector, frame_bgr):
-    """Returns a list of (x, y, w, h, score) boxes in pixel coordinates."""
-    h, w = frame_bgr.shape[:2]
-    detector.setInputSize((w, h))
-    _, faces = detector.detect(frame_bgr)
-    if faces is None:
-        return []
-    return [(int(f[0]), int(f[1]), int(f[2]), int(f[3]), float(f[-1])) for f in faces]
 
 
 def play_clip(path, row, detector=None):
