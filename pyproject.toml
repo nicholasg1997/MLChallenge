@@ -26,6 +26,7 @@ packages = ["src/meld_emotion"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-m 'not network'"
 markers = [
     "network: downloads pretrained weights from Hugging Face; deselected by default, run with `uv run pytest -m network`",
