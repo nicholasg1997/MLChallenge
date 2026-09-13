@@ -47,8 +47,18 @@ def _draw_overlay(frame, tp: TurnProcessor, provisional: dict | None, caption: s
         cv2.putText(frame, caption[:110], (8, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
 
-def run_one_clip(bundle, responder, bank_embeddings, video_path: Path, row: dict, emitter: EventEmitter, *,
-                 show_window: bool = True) -> tuple[dict, dict]:
+def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: EventEmitter, *,
+                 responder=None, show_window: bool = True) -> tuple[dict | None, dict | None, bool]:
+    """Runs one curated clip through the inference core. `responder=None`
+    skips the LM entirely (no `token` events; `done_event["response"] ==
+    ""`) -- the correctness gates (consistency_check.py) only need
+    `final_event["emotion_probs"]` and shouldn't have to load a multi-GB LM.
+    Returns `(final_event, done_event, quit_requested)`; if the user presses
+    `q` mid-clip (only possible when `show_window=True`), the frame-reading
+    loop stops early and `end_turn`/the LM/the 2-second hold are skipped
+    entirely -- `final_event`/`done_event` come back `None` and
+    `quit_requested` is `True` so the caller can stop its own clip loop
+    instead of playing the remaining clips."""
     turn_id = f"dia{row['dialogue_id']}_utt{row['utterance_id']}"
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
@@ -58,6 +68,7 @@ def run_one_clip(bundle, responder, bank_embeddings, video_path: Path, row: dict
     tp = TurnProcessor(bundle, emitter)
     tp.start_turn(turn_id)
     frame_idx, last_frame = -1, None
+    quit_requested = False
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -70,8 +81,11 @@ def run_one_clip(bundle, responder, bank_embeddings, video_path: Path, row: dict
             _draw_overlay(frame, tp, tp.last_provisional, "")
             cv2.imshow(WINDOW, frame)
             if cv2.waitKey(delay_ms) & 0xFF == ord("q"):
+                quit_requested = True
                 break
     cap.release()
+    if quit_requested:
+        return None, None, True
 
     # --- end of turn: the text arrives; everything below is what §2's targets measure ---
     stamps = LatencyStamps(turn_start=time.perf_counter())
@@ -82,19 +96,22 @@ def run_one_clip(bundle, responder, bank_embeddings, video_path: Path, row: dict
     top2 = sorted(final["emotion_probs"].items(), key=lambda kv: kv[1], reverse=True)[:2]
     messages = build_prompt(row["context_prev"], row["text"], final["emotion"], top2, final["sentiment"], cues)
     response_text = ""
-    for i, chunk in enumerate(responder.stream(messages)):
-        if i == 0:
-            stamps.first_token_emitted = time.perf_counter()
-        response_text += chunk
-        emitter.token(turn_id, chunk)
-        if show_window and last_frame is not None:
-            shown = last_frame.copy()
-            _draw_overlay(shown, tp, tp.last_provisional, f"{final['emotion']}/{final['sentiment']}: {response_text}")
-            cv2.imshow(WINDOW, shown)
-            cv2.waitKey(1)
+    if responder is not None:
+        for i, chunk in enumerate(responder.stream(messages)):
+            if i == 0:
+                stamps.first_token_emitted = time.perf_counter()
+            response_text += chunk
+            emitter.token(turn_id, chunk)
+            if show_window and last_frame is not None:
+                shown = last_frame.copy()
+                _draw_overlay(shown, tp, tp.last_provisional, f"{final['emotion']}/{final['sentiment']}: {response_text}")
+                cv2.imshow(WINDOW, shown)
+                cv2.waitKey(1)
     stamps.done_emitted = time.perf_counter()
-    done_event = {"turn_id": turn_id, "phase": "done", "response": response_text, "latency_ms": stamps.as_ms()}
-    emitter.emit(done_event)
+    # messages[-1] is the user-turn content build_prompt built (persona + last 4 context
+    # lines + current line + emotion/sentiment/cues) -- the real prompt sent to the LM,
+    # recorded here so response_rubric.py can score against it instead of an approximation.
+    done_event = emitter.done(turn_id, response_text, stamps.as_ms(), prompt=messages[-1]["content"])
 
     if show_window and last_frame is not None:
         shown = last_frame.copy()
@@ -102,20 +119,26 @@ def run_one_clip(bundle, responder, bank_embeddings, video_path: Path, row: dict
                       f"{final['emotion']}/{final['sentiment']} | {'; '.join(cues)} | {response_text}")
         cv2.imshow(WINDOW, shown)
         cv2.waitKey(2000)
-    return final, done_event
+    return final, done_event, False
 
 
 def warm_up(bundle, video_path: Path) -> None:
     """MPS compiles kernels on first use: the first sampled frame of a cold
-    process costs ~1 s instead of ~0.2 s. Push one real frame through a
-    throwaway TurnProcessor so the first curated clip is measured warm."""
+    process costs ~1 s instead of ~0.2 s, and the same is true of end_turn's
+    RoBERTa forward over a real multi-token sequence (push_frame's dummy
+    text encoding is only ever one token, a shape MPS has already compiled
+    by the time end_turn runs for real). Push one real frame AND run one
+    real end_turn through a throwaway TurnProcessor so both code paths are
+    warm before the first curated clip is measured."""
     cap = cv2.VideoCapture(str(video_path))
     ret, frame = cap.read()
     cap.release()
     if ret:
-        tp = TurnProcessor(bundle, EventEmitter(open(REPO_ROOT / "results" / "warmup_events.jsonl", "w")))
-        tp.start_turn("warmup")
-        tp.push_frame(frame)
+        with open(REPO_ROOT / "results" / "warmup_events.jsonl", "w") as f:
+            tp = TurnProcessor(bundle, EventEmitter(f))
+            tp.start_turn("warmup")
+            tp.push_frame(frame)
+            tp.end_turn("warmup text", [])
 
 
 def main():
@@ -135,17 +158,21 @@ def main():
                     for r in read_manifest(FEATURE_CACHE_DIR / "test" / "manifest.jsonl")}
     index = build_video_index(split_video_dir("test"))
     args.events.parent.mkdir(parents=True, exist_ok=True)
-    emitter = EventEmitter(open(args.events, "a"))
     first = rows_by_clip[clip_ids[0]]
     warm_up(bundle, index[(first["dialogue_id"], first["utterance_id"])])
 
-    for clip_id in clip_ids:
-        row = rows_by_clip[clip_id]
-        print(f"playing {clip_id}: \"{row['text']}\" -> true={row['emotion']}")
-        final, done = run_one_clip(bundle, responder, bank_embeddings, index[(row["dialogue_id"], row["utterance_id"])],
-                                   row, emitter, show_window=not args.no_window)
-        print(f"  predicted={final['emotion']} cues={final['visual_cues']} response={done['response']!r} "
-              f"latency_ms={done['latency_ms']}")
+    with open(args.events, "a") as f:
+        emitter = EventEmitter(f)
+        for clip_id in clip_ids:
+            row = rows_by_clip[clip_id]
+            print(f"playing {clip_id}: \"{row['text']}\" -> true={row['emotion']}")
+            final, done, quit_requested = run_one_clip(bundle, bank_embeddings, index[(row["dialogue_id"], row["utterance_id"])],
+                                                        row, emitter, responder=responder, show_window=not args.no_window)
+            if quit_requested:
+                print("  q pressed -- stopping (remaining clips skipped)")
+                break
+            print(f"  predicted={final['emotion']} cues={final['visual_cues']} response={done['response']!r} "
+                  f"latency_ms={done['latency_ms']}")
     cv2.destroyAllWindows()
 
 
