@@ -21,12 +21,21 @@ FACE_DETECTOR_PARAMS = 75_000   # YuNet 2023mar (232 KB ONNX)
 
 
 def count_lm_params(model_repo: str) -> int:
-    """From the HF config alone: embeddings + per-layer attention/FFN
-    (biases/norms negligible). Same estimate style as the Stage 1 plan."""
+    """From the HF config alone, for the decoder-only layout every candidate
+    shares (Qwen2.5/Qwen3/Phi-3): embeddings (once if tied, else input +
+    output), per-layer q/k/v/o with grouped-query KV heads, and a gated
+    (SwiGLU) FFN with three matrices. Norms and biases are negligible.
+    Verified against mlx-lm's loaded weights (Qwen2.5-1.5B 1.54B, -3B 3.09B)."""
     cfg = AutoConfig.from_pretrained(model_repo)
-    hidden, layers = cfg.hidden_size, cfg.num_hidden_layers
+    hidden, layers, vocab = cfg.hidden_size, cfg.num_hidden_layers, cfg.vocab_size
     inter = getattr(cfg, "intermediate_size", 4 * hidden)
-    return int(cfg.vocab_size * hidden + layers * (4 * hidden * hidden + 2 * hidden * inter))
+    heads = getattr(cfg, "num_attention_heads", 1)
+    kv_heads = getattr(cfg, "num_key_value_heads", None) or heads
+    head_dim = getattr(cfg, "head_dim", None) or hidden // heads
+    embeddings = (1 if getattr(cfg, "tie_word_embeddings", False) else 2) * vocab * hidden
+    attention = 2 * hidden * heads * head_dim + 2 * hidden * kv_heads * head_dim   # q, o + k, v
+    ffn = 3 * hidden * inter                                                       # gate, up, down
+    return int(embeddings + layers * (attention + ffn))
 
 
 def count_bundle_params(bundle) -> dict[str, int]:

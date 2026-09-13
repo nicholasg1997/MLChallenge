@@ -41,10 +41,14 @@ promise sub-100ms, and the assignment doesn't require it. Concretely:
   as they arrive, not after the clip finishes. By end-of-turn, all vision
   work for the turn is already done.
 - A **provisional expression state** is published after every sampled frame:
-  the face/expression encoder's own 7-way softmax, averaged over detected
-  faces and smoothed across frames. It costs nothing (that head is part of the
-  encoder we run anyway) and it is what makes "accept input over time" visibly
-  true — the state moves while the person is still talking.
+  the fusion model's own prediction with the text masked, over the face
+  tokens accumulated so far — exactly the input modality dropout (§4.3)
+  trained it to handle. (The face encoder's own head was the original plan;
+  measured on MELD it is prior-skewed — raw argmax weighted-F1 0.12 on dev,
+  never predicting neutral — so it is not used for anything the user sees.)
+  One extra fusion forward per sampled frame (~10 ms), and it is what makes
+  "accept input over time" visibly true — the state moves while the person
+  is still talking.
 
 **At end of turn — three events, each with a latency target.**
 
@@ -109,7 +113,7 @@ from VAD to push-to-talk.
 | Component | Role | Params | Trained? |
 |---|---|---|---|
 | Text encoder — RoBERTa-base | Encode current utterance + previous *k* utterances (§4.3) | ~125M | Fine-tuned, top half of layers (Stage 1) |
-| Face/expression encoder — ViT-Base (`dima806/facial_emotions_image_detection`) | Encode each detected face crop. Its own 7-way head also provides the provisional state (§2), the zero-training vision-only baseline (§7), and per-face labels for the gloss (§4.4) | ~86M | Frozen (Stage 1); top 4 layers unfrozen (Stage 2, §6) |
+| Face/expression encoder — ViT-Base (`dima806/facial_emotions_image_detection`) | Encode each detected face crop. Its own 7-way head is kept only as the zero-training vision-only baseline (§7) — it is prior-skewed on MELD (§2) | ~86M | Frozen (Stage 1); top 4 layers unfrozen (Stage 2, §6) |
 | Scene encoder — CLIP ViT-B/32 image tower | Encode the letterboxed full frame: setting, hands, number of people, activity | ~88M | Frozen |
 | CLIP text tower | Encodes the fixed visual-gloss prompt bank (§4.4). Computed once and cached, but counted: the gloss requires it | ~63M | Frozen |
 | Modality projectors | Linear maps from face (768-d), scene (512-d) features into the fusion width | ~1M | From scratch |
@@ -167,9 +171,8 @@ and lets attention sort it out.
 
 1. **Detect** faces on the full-resolution frame (YuNet, confidence ≥ 0.75).
 2. **Encode every face crop** (with a ~20% margin, resized to 224²) through the
-   face/expression encoder → one pooled 768-d token per face, plus that
-   model's own 7-way softmax (used for the provisional state and the gloss,
-   never as classifier input).
+   face/expression encoder → one pooled 768-d token per face. (Its own
+   7-way softmax is computed but unused at serving time — see §2.)
 3. **Encode the full frame** through the frozen scene encoder,
    **unconditionally** — not only when zero faces are found. A face the
    detector misses is therefore not a total loss of signal; the scene token
@@ -288,9 +291,9 @@ with no extra forward passes:
   gesture", …) is embedded once with CLIP's text tower. At end-of-turn, the
   mean scene embedding over the turn is scored against the bank; the top 2
   above a margin become phrases.
-- (b) **Per-face expression labels** from the face encoder's own head,
-  majority-voted per track across the turn: "2 faces visible: surprised,
-  neutral".
+- (b) **The vision-only reading of the faces** — the last provisional state
+  (§2), i.e. the fusion model with text masked — as its top-2: "2 faces
+  visible, reading neutral (47%) or anger (16%)".
 
 The gloss is an input to the LM **only**. The classifier sees embeddings,
 never these labels, so its accuracy isn't bottlenecked by a hand-written

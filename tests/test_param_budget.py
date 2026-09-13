@@ -4,12 +4,15 @@ import torch.nn as nn
 def test_count_lm_params_reads_the_hf_config_without_downloading_weights(monkeypatch):
     from scripts.param_budget import count_lm_params
 
-    class _StubConfig:
+    class _StubConfig:   # GQA (2 heads, 1 KV head), gated FFN, tied embeddings -- the Qwen2.5 layout
         num_hidden_layers, hidden_size, intermediate_size, vocab_size = 2, 8, 16, 100
+        num_attention_heads, num_key_value_heads, tie_word_embeddings = 2, 1, True
 
     monkeypatch.setattr("scripts.param_budget.AutoConfig",
                         type("_A", (), {"from_pretrained": staticmethod(lambda repo: _StubConfig())}))
-    assert count_lm_params("fake/repo") == 100 * 8 + 2 * (4 * 8 * 8 + 2 * 8 * 16)
+    head_dim = 8 // 2
+    attention = 2 * 8 * 2 * head_dim + 2 * 8 * 1 * head_dim
+    assert count_lm_params("fake/repo") == 100 * 8 + 2 * (attention + 3 * 8 * 16)
 
 
 def test_count_bundle_params_measures_each_loaded_component():
