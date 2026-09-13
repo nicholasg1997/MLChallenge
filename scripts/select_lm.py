@@ -14,10 +14,10 @@ from pathlib import Path
 from meld_emotion.config import REPO_ROOT
 
 CANDIDATES = [
-    "mlx-community/Qwen3-4B-4bit",              # already in ~/.cache/huggingface on the dev machine
-    "mlx-community/Qwen2.5-3B-Instruct-4bit",
-    "mlx-community/Phi-3.5-mini-instruct-4bit",
-    "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+    "mlx-community/Qwen3-4B-4bit",               # 4B params; already in ~/.cache/huggingface on the dev machine
+    "mlx-community/Phi-3.5-mini-instruct-4bit",  # 3.8B params
+    "mlx-community/Qwen2.5-3B-Instruct-4bit",    # 3.09B params
+    "mlx-community/Qwen2.5-1.5B-Instruct-4bit",  # 1.5B params
 ]
 FIRST_TOKEN_TARGET_S = 1.0
 DONE_TARGET_S = 2.5
