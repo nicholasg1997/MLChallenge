@@ -87,18 +87,12 @@ class TurnProcessor:
         provisional, _ = predict(self.bundle.model, self._item(dummy_text_encoding(self.bundle.tokenizer)),
                                  self._pad_id, self.bundle.device, force_drop_text=True)
         self.last_provisional = provisional
-        event = {"turn_id": self.turn_id, "phase": "provisional", "frame": sample_i,
-                 "faces_seen": len(kept_tracks), "provisional_expression": provisional}
-        self.emitter.emit(event)
-        return event
+        return self.emitter.provisional(self.turn_id, sample_i, len(kept_tracks), provisional)
 
     def end_turn(self, text: str, context_prev: list[str], visual_cues: list[str] | None = None) -> dict:
         cfg = self.bundle.config
         enc = encode_text(self.bundle.tokenizer, format_context(context_prev, cfg.context_k), text, cfg.max_text_tokens)
         emotion_probs, sentiment_probs = predict(self.bundle.model, self._item(enc), self._pad_id, self.bundle.device)
-        event = {"turn_id": self.turn_id, "phase": "final", "text": text,
-                 "emotion": max(emotion_probs, key=emotion_probs.get), "emotion_probs": emotion_probs,
-                 "sentiment": max(sentiment_probs, key=sentiment_probs.get), "sentiment_probs": sentiment_probs,
-                 "faces_seen": self.max_faces_seen, "visual_cues": list(visual_cues or [])}
-        self.emitter.emit(event)
-        return event
+        return self.emitter.final(self.turn_id, text, max(emotion_probs, key=emotion_probs.get), emotion_probs,
+                                  max(sentiment_probs, key=sentiment_probs.get), sentiment_probs,
+                                  self.max_faces_seen, list(visual_cues or []))

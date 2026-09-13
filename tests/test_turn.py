@@ -3,6 +3,7 @@ import pytest
 import torch
 
 from conftest import StubTextEncoder
+from meld_emotion.inference.events import EventEmitter
 
 
 class _StubFaceDetector:
@@ -51,8 +52,13 @@ def _fake_frame(color=(50, 50, 50)):
     return frame
 
 
-class _Collector:
+class _Collector(EventEmitter):
+    """A real EventEmitter whose `emit` records events in a list instead of
+    writing JSON lines to a stream -- so it still exposes the typed
+    `.provisional()`/`.final()`/`.token()`/`.done()` helpers TurnProcessor
+    calls, exactly like the real out=file-handle EventEmitter would."""
     def __init__(self):
+        super().__init__(out=None)
         self.events = []
 
     def emit(self, event):

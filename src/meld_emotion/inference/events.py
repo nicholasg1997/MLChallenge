@@ -19,24 +19,35 @@ class EventEmitter:
         self.out.flush()
 
     def provisional(self, turn_id: str, frame: int, faces_seen: int,
-                    provisional_expression: dict) -> None:
-        self.emit({"turn_id": turn_id, "phase": "provisional", "frame": frame,
-                   "faces_seen": faces_seen, "provisional_expression": provisional_expression})
+                    provisional_expression: dict) -> dict:
+        event = {"turn_id": turn_id, "phase": "provisional", "frame": frame,
+                 "faces_seen": faces_seen, "provisional_expression": provisional_expression}
+        self.emit(event)
+        return event
 
     def final(self, turn_id: str, text: str, emotion: str, emotion_probs: dict,
               sentiment: str, sentiment_probs: dict, faces_seen: int,
-              visual_cues: list[str]) -> None:
-        self.emit({"turn_id": turn_id, "phase": "final", "text": text, "emotion": emotion,
-                   "emotion_probs": emotion_probs, "sentiment": sentiment,
-                   "sentiment_probs": sentiment_probs, "faces_seen": faces_seen,
-                   "visual_cues": visual_cues})
+              visual_cues: list[str]) -> dict:
+        event = {"turn_id": turn_id, "phase": "final", "text": text, "emotion": emotion,
+                 "emotion_probs": emotion_probs, "sentiment": sentiment,
+                 "sentiment_probs": sentiment_probs, "faces_seen": faces_seen,
+                 "visual_cues": visual_cues}
+        self.emit(event)
+        return event
 
     def token(self, turn_id: str, text: str) -> None:
         self.emit({"turn_id": turn_id, "phase": "token", "text": text})
 
-    def done(self, turn_id: str, response: str, latency_ms: dict) -> None:
-        self.emit({"turn_id": turn_id, "phase": "done", "response": response,
-                   "latency_ms": latency_ms})
+    def done(self, turn_id: str, response: str, latency_ms: dict, prompt: str | None = None) -> dict:
+        event = {"turn_id": turn_id, "phase": "done", "response": response,
+                 "latency_ms": latency_ms}
+        if prompt is not None:
+            # Additive field (not part of the design doc's original `done` schema): the
+            # exact user-turn prompt text sent to the LM, so response_rubric.py can score
+            # against the real prompt instead of reconstructing an approximation.
+            event["prompt"] = prompt
+        self.emit(event)
+        return event
 
 
 @dataclass
