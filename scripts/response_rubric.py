@@ -17,16 +17,10 @@ RUBRIC_FIELDS = ("tag_consistent", "uses_visual_cue", "concise", "in_character",
 
 def sample_response_rows(events_path: Path, n: int = 50, seed: int = 0) -> list[dict]:
     events = [json.loads(l) for l in Path(events_path).read_text().splitlines() if l.strip()]
-    finals = {e["turn_id"]: e for e in events if e.get("phase") == "final"}
     done = [e for e in events if e.get("phase") == "done"]
     sampled = random.Random(seed).sample(done, min(n, len(done)))
-    rows = []
-    for e in sampled:
-        final = finals.get(e["turn_id"], {})
-        prompt = f"{final.get('text', '')} [{final.get('emotion', '')}/{final.get('sentiment', '')}; " \
-                 f"cues: {', '.join(final.get('visual_cues', []))}]"
-        rows.append({"turn_id": e["turn_id"], "prompt": prompt, "response": e["response"], **{f: None for f in RUBRIC_FIELDS}})
-    return rows
+    return [{"turn_id": e["turn_id"], "prompt": e.get("prompt", ""), "response": e["response"],
+             **{f: None for f in RUBRIC_FIELDS}} for e in sampled]
 
 
 def main():
