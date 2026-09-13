@@ -91,8 +91,12 @@ Design: [docs/superpowers/specs/…design.md](docs/superpowers/specs/2026-09-11-
 ```bash
 uv sync --extra live --extra mlx          # macOS; drop --extra mlx elsewhere (torch paths remain)
 bash scripts/download_face_model.sh       # YuNet weights -> models/
+bash scripts/download_checkpoint.sh       # the submitted model (886 MB) from the v1.0 release -> results/
 uv run pytest                             # 181 offline tests
 ```
+
+The remaining weights (RoBERTa, the face ViT, CLIP, Whisper, the reply LM; ~4 GB) are
+pulled from Hugging Face on first use.
 
 Data and training (MELD.Raw is ~10 GB; preprocessing is ~2.5 h on the M1):
 
@@ -107,7 +111,8 @@ uv run python scripts/train_meld.py --ablation fusion_faces_only --seed 0      #
 uv run python scripts/train_stage2.py --init-from results/fusion_faces_only/seed0/best.pt --eval-test   # or modal_stage2.py
 ```
 
-Demos (expect the submitted checkpoint at `results/stage2_fusion_faces_only/seed1/best.pt`):
+Demos (the checkpoint from `download_checkpoint.sh`; the replay additionally needs the MELD
+test videos and features from the pipeline above, the live demo needs nothing else):
 
 ```bash
 uv run --extra mlx python scripts/select_lm.py                                   # picks the reply LM
