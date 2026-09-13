@@ -6,17 +6,23 @@ LM never gates it), `token` (one incremental response chunk), `done`
 (closes the turn with the full response and the three measured latencies).
 """
 import json
+import threading
 from dataclasses import dataclass
 from typing import TextIO
 
 
 class EventEmitter:
+    """One JSON object per line. Writes are locked: the live path emits
+    `token`/`done` from the response thread while the camera loop emits
+    `provisional` from the main thread."""
     def __init__(self, out: TextIO):
         self.out = out
+        self._lock = threading.Lock()
 
     def emit(self, event: dict) -> None:
-        self.out.write(json.dumps(event) + "\n")
-        self.out.flush()
+        with self._lock:
+            self.out.write(json.dumps(event) + "\n")
+            self.out.flush()
 
     def provisional(self, turn_id: str, frame: int, faces_seen: int,
                     provisional_expression: dict) -> dict:

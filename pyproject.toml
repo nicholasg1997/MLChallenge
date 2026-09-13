@@ -12,6 +12,17 @@ dependencies = [
     "transformers>=4.40,<6",
 ]
 
+[project.optional-dependencies]
+live = [                          # the live demo's capture stack (scripts/live_demo.py)
+    "sounddevice>=0.5",           # microphone (bundles PortAudio on macOS)
+    "webrtcvad-wheels>=2.0.14",   # VAD end-of-speech
+    "av>=14",                     # --source <video file>: decode its audio track
+]
+mlx = [                           # Apple-silicon runtimes for the response LM and ASR
+    "mlx-lm>=0.20; sys_platform == 'darwin'",
+    "mlx-whisper>=0.4; sys_platform == 'darwin'",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

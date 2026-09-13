@@ -21,30 +21,13 @@ from meld_emotion.data.video_index import build_video_index
 from meld_emotion.inference.events import EventEmitter, LatencyStamps
 from meld_emotion.inference.gloss import build_clip_tokenizer, embed_prompt_bank, face_gloss, scene_gloss
 from meld_emotion.inference.loader import load_inference_bundle
+from meld_emotion.inference.overlay import draw_overlay
 from meld_emotion.inference.responder import Responder, build_prompt
 from meld_emotion.inference.turn import TurnProcessor
 
 DEFAULT_CHECKPOINT = REPO_ROOT / "results" / "stage2_fusion_faces_only" / "seed1" / "best.pt"
 DEFAULT_PREDICTIONS = DEFAULT_CHECKPOINT.parent / "test_predictions.jsonl"
 WINDOW = "Replay demo  (q=quit)"
-
-
-def _draw_overlay(frame, tp: TurnProcessor, provisional: dict | None, caption: str) -> None:
-    """Face boxes + track IDs held from the last SAMPLED frame, a thin bar per
-    emotion sized by the current provisional probability, and a caption bar."""
-    for (x, y, w, h, score), track_id in zip(tp.last_boxes, tp.last_track_ids):
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.putText(frame, f"id{track_id}", (x, max(0, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    if provisional:
-        bar_x, bar_y, bar_w, row_h = 8, 8, 100, 14
-        for i, (label, prob) in enumerate(provisional.items()):
-            y = bar_y + i * row_h
-            cv2.rectangle(frame, (bar_x, y), (bar_x + int(bar_w * prob), y + row_h - 4), (200, 200, 0), -1)
-            cv2.putText(frame, label[:4], (bar_x + bar_w + 4, y + row_h - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-    if caption:
-        h = frame.shape[0]
-        cv2.rectangle(frame, (0, h - 28), (frame.shape[1], h), (0, 0, 0), -1)
-        cv2.putText(frame, caption[:110], (8, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
 
 def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: EventEmitter, *,
@@ -81,7 +64,7 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
         if frame_idx in wanted:
             tp.push_frame(frame)                         # provisional event; also updates tp.last_provisional
         if show_window:
-            _draw_overlay(frame, tp, tp.last_provisional, "")
+            draw_overlay(frame, tp.last_boxes, tp.last_track_ids, tp.last_provisional, [])
             cv2.imshow(WINDOW, frame)
             # Real speed (design doc §8.1): each frame is shown at its wall-clock slot, so the
             # vision work on a sampled frame eats into the wait instead of adding to it.
@@ -110,7 +93,8 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
             emitter.token(turn_id, chunk)
             if show_window and last_frame is not None:
                 shown = last_frame.copy()
-                _draw_overlay(shown, tp, tp.last_provisional, f"{final['emotion']}/{final['sentiment']}: {response_text}")
+                draw_overlay(shown, tp.last_boxes, tp.last_track_ids, tp.last_provisional,
+                             [f"\"{row['text']}\"  ->  {final['emotion']} / {final['sentiment']}", response_text])
                 cv2.imshow(WINDOW, shown)
                 cv2.waitKey(1)
     stamps.done_emitted = time.perf_counter()
@@ -121,8 +105,10 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
 
     if show_window and last_frame is not None:
         shown = last_frame.copy()
-        _draw_overlay(shown, tp, tp.last_provisional,
-                      f"{final['emotion']}/{final['sentiment']} | {'; '.join(cues)} | {response_text}")
+        draw_overlay(shown, tp.last_boxes, tp.last_track_ids, tp.last_provisional,
+                     [f"\"{row['text']}\"  ->  {final['emotion']} / {final['sentiment']}  |  {'; '.join(cues)}",
+                      response_text, f"state {done_event['latency_ms']['state']} ms  first token "
+                      f"{done_event['latency_ms']['first_token']} ms  done {done_event['latency_ms']['done']} ms"])
         cv2.imshow(WINDOW, shown)
         cv2.waitKey(2000)
     return final, done_event, False
