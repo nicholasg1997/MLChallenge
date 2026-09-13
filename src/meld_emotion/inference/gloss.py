@@ -41,7 +41,8 @@ def scene_gloss(mean_scene_embedding, bank_embeddings: torch.Tensor, margin: flo
     return [SCENE_PROMPT_BANK[i] for i in top2.indices.tolist()]
 
 
-FACE_READING_THRESHOLD = 0.25   # a non-neutral emotion is "read" once its faces-only probability clears this
+FACE_READING_THRESHOLD = 0.25        # fusion (text-masked) reading: only joy ever clears this; see face_reading()
+FACE_HEAD_READING_THRESHOLD = 0.5    # the face encoder's own head: posed-expression classifier, needs real confidence
 
 
 def face_reading(vision_only_expression: dict | None, threshold: float = FACE_READING_THRESHOLD) -> tuple[str, float]:

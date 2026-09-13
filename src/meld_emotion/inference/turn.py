@@ -43,6 +43,7 @@ class TurnProcessor:
         self.max_faces_seen = 0
         self.last_boxes: list[tuple] = []
         self.last_track_ids: list[int] = []
+        self.last_crops: list[Image.Image] = []     # the face crops of the last sampled frame (PIL RGB)
 
     @property
     def mean_scene_embedding(self) -> np.ndarray:
@@ -74,6 +75,7 @@ class TurnProcessor:
             if crop is not None:
                 crops.append(Image.fromarray(crop[:, :, ::-1]))   # OpenCV BGR -> PIL RGB
                 kept_tracks.append(track_id)
+        self.last_crops = crops
         enc = self.bundle.face_encoder.encode_batch(crops)
         if len(kept_tracks):
             self._face_features.append(np.asarray(enc["features"], np.float32))

@@ -38,8 +38,10 @@ def count_lm_params(model_repo: str) -> int:
 
 
 def count_bundle_params(bundle) -> dict[str, int]:
+    face = count_parameters(bundle.face_encoder.model)[0]
     return {"text_and_fusion": count_parameters(bundle.model)[0],
-            "face_encoder": count_parameters(bundle.face_encoder.model)[0],
+            "face_encoder": face,
+            "face_reader": face,     # the live demo's second, original-weights copy of the same ViT (its expression head)
             "scene_encoder": count_parameters(bundle.scene_encoder.model)[0],
             "face_detector": FACE_DETECTOR_PARAMS}
 
@@ -48,6 +50,7 @@ def build_budget_table(counts: dict, lm_repo: str, lm_params: int, stage: int) -
     face_note = "Fine-tuned top 4 layers (Stage 2)" if stage >= 2 else "Frozen"
     rows = [("RoBERTa-base + fusion transformer + projectors + heads", counts["text_and_fusion"], "RoBERTa top half fine-tuned; fusion from scratch"),
             ("Face/expression encoder (ViT-Base)", counts["face_encoder"], face_note),
+            ("Face-expression reader (original ViT-Base + head; live gloss only)", counts["face_reader"], "Frozen"),
             ("CLIP ViT-B/32 (image + text towers; gloss only)", counts["scene_encoder"], "Frozen"),
             ("Face detector (YuNet)", counts["face_detector"], "Zero-shot"),
             (f"Response LM ({lm_repo.split('/')[-1]})", lm_params, "Prompted, not fine-tuned")]

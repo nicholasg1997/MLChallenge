@@ -21,12 +21,13 @@ def test_count_bundle_params_measures_each_loaded_component():
     bundle = SimpleNamespace(model=nn.Linear(4, 3), face_encoder=SimpleNamespace(model=nn.Linear(2, 2)),
                              scene_encoder=SimpleNamespace(model=nn.Linear(3, 1)))
     counts = count_bundle_params(bundle)
-    assert counts == {"text_and_fusion": 15, "face_encoder": 6, "scene_encoder": 4, "face_detector": 75_000}
+    assert counts == {"text_and_fusion": 15, "face_encoder": 6, "face_reader": 6, "scene_encoder": 4, "face_detector": 75_000}
 
 
 def test_build_budget_table_includes_every_component_and_the_total():
     from scripts.param_budget import build_budget_table
-    counts = {"text_and_fusion": 136_000_000, "face_encoder": 86_000_000, "scene_encoder": 151_000_000, "face_detector": 75_000}
+    counts = {"text_and_fusion": 136_000_000, "face_encoder": 86_000_000, "face_reader": 86_000_000,
+              "scene_encoder": 151_000_000, "face_detector": 75_000}
     table = build_budget_table(counts, "mlx-community/Qwen3-4B-4bit", 4_000_000_000, stage=2)
     assert "RoBERTa" in table and "CLIP" in table and "Qwen3-4B-4bit" in table and "Fine-tuned top 4" in table
-    assert "**4.37B**" in table
+    assert "**4.46B**" in table

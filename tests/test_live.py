@@ -191,3 +191,48 @@ def test_warm_up_touches_every_model_and_emits_nothing():
     assert len(responder.prompts) == 1
     assert events.events == []                                 # the throwaway processor's events go nowhere
     assert session.tp.turn_id == "live001" and len(session.tp._scene_features) == 0
+
+
+class _FakeFaceReader:
+    """Stands in for the original FaceEmotionEncoder: one scripted 7-way reading per call."""
+    meld_labels = ("sadness", "disgust", "anger", "neutral", "fear", "surprise", "joy")
+
+    def __init__(self, readings):
+        self.readings, self.calls = list(readings), []
+
+    def encode_batch(self, images):
+        self.calls.append(len(images))
+        row = np.array(self.readings.pop(0), dtype=np.float32)
+        return {"features": np.zeros((len(images), 8), np.float32), "probs": np.tile(row, (len(images), 1))}
+
+
+def test_face_reader_reading_is_ema_smoothed_and_drives_the_label_and_the_cue():
+    angry = [0.05, 0.02, 0.80, 0.05, 0.02, 0.03, 0.03]
+    session, events = _session(texts=("why",), flags=[True, True, False, False],
+                               face_reader=_FakeFaceReader([angry, angry]), face_ema=0.5)
+    assert session.face_threshold == 0.5                       # the head's default
+    session.on_frame(_fake_frame(), now=0.0)
+    assert session.face_reader.calls == [1]                    # the crops from push_frame, not a second detection
+    assert session.face_label() == "face: anger (80%)"
+    session.on_audio(_pcm()); session.on_audio(_pcm())         # speech start resets the classifier's window
+    session.on_frame(_fake_frame(), now=1.0)                   # a face seen during the utterance
+    assert session.face_probs["anger"] == pytest.approx(0.8)   # EMA of two identical readings
+    session.on_audio(_pcm()); final = session.on_audio(_pcm())
+    assert final["visual_cues"][-1] == "1 face visible, reading anger (80%)"
+
+
+def test_face_reader_ema_blends_a_new_reading_with_the_old_one():
+    angry = [0.05, 0.02, 0.80, 0.05, 0.02, 0.03, 0.03]
+    calm = [0.05, 0.02, 0.10, 0.75, 0.02, 0.03, 0.03]
+    session, _ = _session(face_reader=_FakeFaceReader([angry, calm]), face_ema=0.5)
+    session.on_frame(_fake_frame(), now=0.0)
+    session.on_frame(_fake_frame(), now=1.0)
+    assert session.face_probs["anger"] == pytest.approx(0.45)
+    assert session.face_label() == "face: neutral (40%)"      # anger 0.45 is under the 0.5 threshold
+
+
+def test_without_a_face_reader_the_fusion_reading_is_used():
+    session, _ = _session()
+    assert session.face_reader is None and session.face_threshold == 0.25
+    session.on_frame(_fake_frame(), now=0.0)
+    assert session.face_expression() is session.tp.last_provisional

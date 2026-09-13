@@ -5,9 +5,19 @@ event, whose latency includes ASR) -> the response LM on a background
 thread so the camera keeps running while it streams. Context for the text
 encoder is the previous live turns' transcripts.
 
-Vision runs between turns too (the provisional bars keep moving); the
-window the classifier sees is reset at speech start, which is what MELD's
-clips were -- one utterance's worth of frames."""
+Vision runs between turns too (the face reading keeps moving); the window
+the classifier sees is reset at speech start, which is what MELD's clips
+were -- one utterance's worth of frames.
+
+The face reading shown on screen and handed to the LM as the face cue comes
+from `face_reader` when one is given: the ORIGINAL face encoder's own 7-way
+head (a posed-expression classifier), averaged over the faces in the frame
+and EMA-smoothed. The fusion model's text-masked reading, used on MELD
+replay, is prior-locked on a live face (surprise/anger/sadness/fear never
+left 0.04-0.10 over a 658-frame session), while the head responds to posed
+expressions -- and is known-bad on MELD actors mid-sentence, which is why
+the replay does not use it. The provisional *event* is the fusion model's
+either way."""
 import queue
 import threading
 import time
@@ -18,7 +28,8 @@ from PIL import Image
 
 from meld_emotion.inference.audio import pcm16_to_float
 from meld_emotion.inference.events import LatencyStamps
-from meld_emotion.inference.gloss import FACE_READING_THRESHOLD, face_gloss, scene_gloss
+from meld_emotion.inference.gloss import (FACE_HEAD_READING_THRESHOLD, FACE_READING_THRESHOLD, face_gloss,
+                                          scene_gloss)
 from meld_emotion.inference.responder import build_prompt
 from meld_emotion.inference.turn import TurnProcessor
 
@@ -62,13 +73,17 @@ class ResponseWorker:
 
 class LiveSession:
     def __init__(self, bundle, bank_embeddings, transcriber, endpoint, emitter, *, responder=None,
-                 push_to_talk: bool = False, face_threshold: float = FACE_READING_THRESHOLD,
-                 sample_interval_s: float = SAMPLE_INTERVAL_S):
+                 push_to_talk: bool = False, face_reader=None, face_threshold: float | None = None,
+                 face_ema: float = 0.5, sample_interval_s: float = SAMPLE_INTERVAL_S):
         self.bundle, self.bank_embeddings, self.transcriber, self.endpoint, self.emitter = \
             bundle, bank_embeddings, transcriber, endpoint, emitter
         self.tp = TurnProcessor(bundle, emitter)
         self.worker = ResponseWorker(responder, emitter) if responder is not None else None
-        self.push_to_talk, self.face_threshold = push_to_talk, face_threshold
+        self.push_to_talk = push_to_talk
+        self.face_reader, self.face_ema = face_reader, face_ema
+        self.face_threshold = face_threshold if face_threshold is not None else \
+            (FACE_HEAD_READING_THRESHOLD if face_reader is not None else FACE_READING_THRESHOLD)
+        self.face_probs: Optional[dict] = None      # the reader's smoothed 7-way reading, MELD labels
         self.sample_interval_s = sample_interval_s
         self.context: list[str] = []          # previous live turns' transcripts
         self.turn_n = 0
@@ -97,8 +112,17 @@ class LiveSession:
         self._last_sample = now
         start = time.perf_counter()
         self.tp.push_frame(frame_bgr)
+        if self.face_reader is not None and self.tp.last_crops:
+            probs = self.face_reader.encode_batch(self.tp.last_crops)["probs"].mean(axis=0)
+            new = dict(zip(self.face_reader.meld_labels, map(float, probs)))
+            self.face_probs = new if self.face_probs is None else \
+                {k: self.face_ema * new[k] + (1 - self.face_ema) * self.face_probs[k] for k in new}
         self.stats["vision_s"].append(time.perf_counter() - start)
         return True
+
+    def face_expression(self) -> Optional[dict]:
+        """What the face label and the LM's face cue are read from."""
+        return self.face_probs if self.face_reader is not None else self.tp.last_provisional
 
     # --- audio: VAD-driven, or collected between push-to-talk presses ---
     def on_audio(self, pcm_frame: bytes) -> Optional[dict]:
@@ -144,7 +168,7 @@ class LiveSession:
             self.status = self._idle_status()
             return None
         cues = scene_gloss(self.tp.mean_scene_embedding, self.bank_embeddings) + \
-            [face_gloss(self.tp.max_faces_seen, self.tp.last_provisional, self.face_threshold)]
+            [face_gloss(self.tp.max_faces_seen, self.face_expression(), self.face_threshold)]
         final = self.tp.end_turn(text, self.context, visual_cues=cues)
         stamps.state_emitted = time.perf_counter()
         top2 = sorted(final["emotion_probs"].items(), key=lambda kv: kv[1], reverse=True)[:2]
@@ -186,22 +210,25 @@ class LiveSession:
 
     def face_label(self) -> str:
         from meld_emotion.inference.overlay import face_label_for
-        return face_label_for(len(self.tp.last_track_ids), self.tp.last_provisional, self.face_threshold)
+        return face_label_for(len(self.tp.last_track_ids), self.face_expression(), self.face_threshold)
 
     def close(self) -> None:
         if self.worker is not None:
             self.worker.close()
 
 
-def warm_up(bundle, transcriber, responder=None) -> None:
+def warm_up(bundle, transcriber, responder=None, face_reader=None) -> None:
     """MPS compiles kernels on first use (~1-2 s per model): run every path
     once on synthetic input, through a throwaway TurnProcessor whose events
     go nowhere, before the first real turn is measured -- the face and scene
     encoders, the text-side end_turn, Whisper, and the LM."""
     import io
     from meld_emotion.inference.events import EventEmitter
-    bundle.face_encoder.encode_batch([Image.new("RGB", (224, 224), (128, 128, 128))])
-    bundle.scene_encoder.encode(Image.new("RGB", (224, 224), (128, 128, 128)))
+    grey = Image.new("RGB", (224, 224), (128, 128, 128))
+    bundle.face_encoder.encode_batch([grey])
+    bundle.scene_encoder.encode(grey)
+    if face_reader is not None:
+        face_reader.encode_batch([grey])
     tp = TurnProcessor(bundle, EventEmitter(io.StringIO()))
     tp.start_turn("warmup")
     tp.push_frame(np.full((240, 320, 3), 128, dtype=np.uint8))
