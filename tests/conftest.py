@@ -77,3 +77,42 @@ def synthetic_features(tmp_path):
     train = write_synthetic_split(root, "train", 28, seed=0, long_clip_every=7)
     dev = write_synthetic_split(root, "dev", 14, seed=1)
     return root, train, dev
+
+
+import torch as _torch
+from dataclasses import asdict as _asdict
+
+
+def write_synthetic_checkpoint(path, d_model=32, n_heads=4, ff_dim=64, n_layers=1,
+                               face_dim=8, scene_dim=4, use_text=True, stage2=False):
+    """A checkpoint in exactly train.py's save format (train_stage2.py's when
+    stage2=True: adds face_encoder_state / stage / base_checkpoint), small
+    enough to build and load in a unit test."""
+    from meld_emotion.training.config import TrainConfig
+    from meld_emotion.training.model import FusionModel
+    config = TrainConfig(d_model=d_model, n_heads=n_heads, ff_dim=ff_dim, n_layers=n_layers,
+                         use_text=use_text, use_scene=not stage2, use_track_id=not stage2,
+                         face_trainable_layers=4 if stage2 else 0)
+    text_encoder = StubTextEncoder(d_model) if use_text else None
+    model = FusionModel(config, text_encoder, face_dim=face_dim, scene_dim=scene_dim)
+    ckpt = {"model_state": model.state_dict(), "config": _asdict(config), "epoch": 1,
+            "dev_weighted_f1": 0.5, "face_dim": face_dim, "scene_dim": scene_dim}
+    if stage2:
+        ckpt.update({"face_encoder_state": {"dummy.weight": _torch.zeros(1)}, "stage": 2,
+                     "base_checkpoint": "results/fusion_faces_only/seed0/best.pt"})
+    _torch.save(ckpt, path)
+    return config
+
+
+@pytest.fixture
+def synthetic_checkpoint(tmp_path):
+    path = tmp_path / "best.pt"
+    config = write_synthetic_checkpoint(path)
+    return path, config
+
+
+@pytest.fixture
+def synthetic_stage2_checkpoint(tmp_path):
+    path = tmp_path / "stage2.pt"
+    config = write_synthetic_checkpoint(path, stage2=True)
+    return path, config
