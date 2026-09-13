@@ -16,7 +16,7 @@ import cv2
 
 from meld_emotion.config import FEATURE_CACHE_DIR, REPO_ROOT, split_video_dir
 from meld_emotion.data.manifest import read_manifest
-from meld_emotion.data.preprocess import sample_frame_indices
+from meld_emotion.data.preprocess import MAX_DECODE_SECONDS, sample_frame_indices
 from meld_emotion.data.video_index import build_video_index
 from meld_emotion.inference.events import EventEmitter, LatencyStamps
 from meld_emotion.inference.gloss import build_clip_tokenizer, embed_prompt_bank, face_gloss, scene_gloss
@@ -63,13 +63,16 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
     wanted = set(sample_frame_indices(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), fps))
-    delay_ms = max(1, int(1000 / fps))
+    # The model's input ends at the decode cap (preprocess.py), so the turn does too: for the
+    # few >15 s clips the text arrives when the last sampled frame has been consumed.
+    max_frames = int(fps * MAX_DECODE_SECONDS)
 
     tp = TurnProcessor(bundle, emitter)
     tp.start_turn(turn_id)
     frame_idx, last_frame = -1, None
     quit_requested = False
-    while True:
+    clip_start = time.perf_counter()
+    while frame_idx + 1 < max_frames:
         ret, frame = cap.read()
         if not ret:
             break
@@ -80,7 +83,10 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
         if show_window:
             _draw_overlay(frame, tp, tp.last_provisional, "")
             cv2.imshow(WINDOW, frame)
-            if cv2.waitKey(delay_ms) & 0xFF == ord("q"):
+            # Real speed (design doc §8.1): each frame is shown at its wall-clock slot, so the
+            # vision work on a sampled frame eats into the wait instead of adding to it.
+            wait_ms = int((clip_start + (frame_idx + 1) / fps - time.perf_counter()) * 1000)
+            if cv2.waitKey(max(1, wait_ms)) & 0xFF == ord("q"):
                 quit_requested = True
                 break
     cap.release()
