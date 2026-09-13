@@ -19,9 +19,10 @@ from meld_emotion.data.manifest import read_manifest
 from meld_emotion.data.preprocess import MAX_DECODE_SECONDS, sample_frame_indices
 from meld_emotion.data.video_index import build_video_index
 from meld_emotion.inference.events import EventEmitter, LatencyStamps
-from meld_emotion.inference.gloss import build_clip_tokenizer, embed_prompt_bank, face_gloss, scene_gloss
+from meld_emotion.inference.gloss import (FACE_READING_THRESHOLD, build_clip_tokenizer, embed_prompt_bank, face_gloss,
+                                          scene_gloss)
 from meld_emotion.inference.loader import DEFAULT_CHECKPOINT, load_inference_bundle
-from meld_emotion.inference.overlay import draw_overlay
+from meld_emotion.inference.overlay import draw_overlay, face_label_for
 from meld_emotion.inference.responder import Responder, build_prompt
 from meld_emotion.inference.turn import TurnProcessor
 
@@ -62,7 +63,8 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
         if frame_idx in wanted:
             tp.push_frame(frame)                         # provisional event; also updates tp.last_provisional
         if show_window:
-            draw_overlay(frame, tp.last_boxes, tp.last_track_ids, tp.last_provisional, [])
+            draw_overlay(frame, tp.last_boxes, tp.last_track_ids,
+                         face_label_for(len(tp.last_track_ids), tp.last_provisional, FACE_READING_THRESHOLD), [])
             cv2.imshow(WINDOW, frame)
             # Real speed (design doc §8.1): each frame is shown at its wall-clock slot, so the
             # vision work on a sampled frame eats into the wait instead of adding to it.
@@ -80,6 +82,7 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
     final = tp.end_turn(row["text"], row["context_prev"], visual_cues=cues)
     stamps.state_emitted = time.perf_counter()
 
+    face_label = face_label_for(len(tp.last_track_ids), tp.last_provisional, FACE_READING_THRESHOLD)
     top2 = sorted(final["emotion_probs"].items(), key=lambda kv: kv[1], reverse=True)[:2]
     messages = build_prompt(row["context_prev"], row["text"], final["emotion"], top2, final["sentiment"], cues)
     response_text = ""
@@ -91,7 +94,7 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
             emitter.token(turn_id, chunk)
             if show_window and last_frame is not None:
                 shown = last_frame.copy()
-                draw_overlay(shown, tp.last_boxes, tp.last_track_ids, tp.last_provisional,
+                draw_overlay(shown, tp.last_boxes, tp.last_track_ids, face_label,
                              [f"\"{row['text']}\"  ->  {final['emotion']} / {final['sentiment']}", response_text])
                 cv2.imshow(WINDOW, shown)
                 cv2.waitKey(1)
@@ -103,7 +106,7 @@ def run_one_clip(bundle, bank_embeddings, video_path: Path, row: dict, emitter: 
 
     if show_window and last_frame is not None:
         shown = last_frame.copy()
-        draw_overlay(shown, tp.last_boxes, tp.last_track_ids, tp.last_provisional,
+        draw_overlay(shown, tp.last_boxes, tp.last_track_ids, face_label,
                      [f"\"{row['text']}\"  ->  {final['emotion']} / {final['sentiment']}  |  {'; '.join(cues)}",
                       response_text, f"state {done_event['latency_ms']['state']} ms  first token "
                       f"{done_event['latency_ms']['first_token']} ms  done {done_event['latency_ms']['done']} ms"])

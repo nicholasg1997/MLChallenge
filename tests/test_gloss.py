@@ -16,11 +16,23 @@ def test_scene_gloss_reports_only_the_top1_when_the_next_is_within_margin():
     assert len(scene_gloss(np.array([1.0, 0.0], dtype=np.float32), bank, margin=0.5)) == 1
 
 
-def test_face_gloss_reads_the_vision_only_top2_and_counts_faces():
+def test_face_reading_is_neutral_unless_a_non_neutral_emotion_clears_the_threshold():
+    from meld_emotion.inference.gloss import face_reading
+    relaxed = {"neutral": 0.52, "joy": 0.18, "surprise": 0.1, "anger": 0.1, "sadness": 0.05, "disgust": 0.03, "fear": 0.02}
+    smiling = {"neutral": 0.44, "joy": 0.34, "surprise": 0.1, "anger": 0.05, "sadness": 0.04, "disgust": 0.02, "fear": 0.01}
+    assert face_reading(relaxed) == ("neutral", 0.52)
+    assert face_reading(smiling) == ("joy", 0.34)
+    assert face_reading(smiling, threshold=0.4) == ("neutral", 0.44)
+    assert face_reading(None) == ("neutral", 0.0)
+
+
+def test_face_gloss_uses_the_thresholded_reading_and_counts_faces():
     from meld_emotion.inference.gloss import face_gloss
     probs = {"neutral": 0.23, "joy": 0.05, "surprise": 0.52, "anger": 0.1, "sadness": 0.05, "disgust": 0.03, "fear": 0.02}
-    assert face_gloss(2, probs) == "2 faces visible, reading surprise (52%) or neutral (23%)"
+    assert face_gloss(2, probs) == "2 faces visible, reading surprise (52%)"
     assert face_gloss(1, probs).startswith("1 face visible, reading surprise")
+    relaxed = {"neutral": 0.55, "joy": 0.2, "surprise": 0.1, "anger": 0.05, "sadness": 0.05, "disgust": 0.03, "fear": 0.02}
+    assert face_gloss(1, relaxed) == "1 face visible, reading neutral (55%)"
     assert face_gloss(0, probs) == "no faces visible"
     assert face_gloss(0, None) == "no faces visible"
 

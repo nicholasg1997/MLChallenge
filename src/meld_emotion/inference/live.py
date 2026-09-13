@@ -18,7 +18,7 @@ from PIL import Image
 
 from meld_emotion.inference.audio import pcm16_to_float
 from meld_emotion.inference.events import LatencyStamps
-from meld_emotion.inference.gloss import face_gloss, scene_gloss
+from meld_emotion.inference.gloss import FACE_READING_THRESHOLD, face_gloss, scene_gloss
 from meld_emotion.inference.responder import build_prompt
 from meld_emotion.inference.turn import TurnProcessor
 
@@ -62,15 +62,17 @@ class ResponseWorker:
 
 class LiveSession:
     def __init__(self, bundle, bank_embeddings, transcriber, endpoint, emitter, *, responder=None,
+                 push_to_talk: bool = False, face_threshold: float = FACE_READING_THRESHOLD,
                  sample_interval_s: float = SAMPLE_INTERVAL_S):
         self.bundle, self.bank_embeddings, self.transcriber, self.endpoint, self.emitter = \
             bundle, bank_embeddings, transcriber, endpoint, emitter
         self.tp = TurnProcessor(bundle, emitter)
         self.worker = ResponseWorker(responder, emitter) if responder is not None else None
+        self.push_to_talk, self.face_threshold = push_to_talk, face_threshold
         self.sample_interval_s = sample_interval_s
         self.context: list[str] = []          # previous live turns' transcripts
         self.turn_n = 0
-        self.status = "listening"
+        self.status = self._idle_status()
         self.lines: list[str] = []            # caption lines for the overlay
         self.stats = {"vision_s": [], "asr_s": []}
         self._last_sample = -float("inf")
@@ -82,6 +84,9 @@ class LiveSession:
     def _next_turn_id(self) -> str:
         self.turn_n += 1
         return f"live{self.turn_n:03d}"
+
+    def _idle_status(self) -> str:
+        return "space to talk" if self.push_to_talk else "listening"
 
     # --- vision ---
     def on_frame(self, frame_bgr: np.ndarray, now: float) -> bool:
@@ -95,12 +100,13 @@ class LiveSession:
         self.stats["vision_s"].append(time.perf_counter() - start)
         return True
 
-    # --- audio: VAD-driven ---
+    # --- audio: VAD-driven, or collected between push-to-talk presses ---
     def on_audio(self, pcm_frame: bytes) -> Optional[dict]:
         """One 30 ms microphone frame. Returns the final event when this frame ended a turn."""
-        if self._ptt_buffer is not None:                 # push-to-talk: just collect
-            self._ptt_buffer.append(pcm_frame)
-            return None
+        if self.push_to_talk:
+            if self._ptt_buffer is not None:
+                self._ptt_buffer.append(pcm_frame)
+            return None                                   # the VAD never runs in push-to-talk mode
         event = self.endpoint.feed(pcm_frame)
         if event is None:
             return None
@@ -115,6 +121,7 @@ class LiveSession:
         if self._ptt_buffer is None:
             self._ptt_buffer = []
             self._begin_turn()
+            self.status = "recording (space to send)"
             return None
         audio, self._ptt_buffer = b"".join(self._ptt_buffer), None
         return self.end_turn(audio)
@@ -130,12 +137,14 @@ class LiveSession:
         stamps = LatencyStamps(turn_start=time.perf_counter())
         self.status = "transcribing"
         text = self.transcriber.transcribe(pcm16_to_float(pcm))
-        self.stats["asr_s"].append(time.perf_counter() - stamps.turn_start)
+        stamps.asr_done = time.perf_counter()
+        self.stats["asr_s"].append(stamps.asr_done - stamps.turn_start)
         if not text:
-            self.status = "listening"
+            self.tp.start_turn(turn_id)            # nothing was said: drop this window's faces too
+            self.status = self._idle_status()
             return None
         cues = scene_gloss(self.tp.mean_scene_embedding, self.bank_embeddings) + \
-            [face_gloss(self.tp.max_faces_seen, self.tp.last_provisional)]
+            [face_gloss(self.tp.max_faces_seen, self.tp.last_provisional, self.face_threshold)]
         final = self.tp.end_turn(text, self.context, visual_cues=cues)
         stamps.state_emitted = time.perf_counter()
         top2 = sorted(final["emotion_probs"].items(), key=lambda kv: kv[1], reverse=True)[:2]
@@ -150,7 +159,7 @@ class LiveSession:
             stamps.done_emitted = time.perf_counter()
             self.emitter.done(turn_id, "", stamps.as_ms(), prompt=messages[-1]["content"])
             self._finish_lines(turn_id)
-            self.status = "listening"
+            self.status = self._idle_status()
         self.tp.start_turn(self._next_turn_id())    # keep watching while the LM talks
         return final
 
@@ -166,13 +175,18 @@ class LiveSession:
             if chunk is None:
                 self._finish_lines(turn_id)
                 if turn_id == self._responding:
-                    self._responding, self.status = None, "listening"
+                    self._responding, self.status = None, self._idle_status()
             elif turn_id == self._responding and len(self.lines) >= 2:
                 self.lines[1] += chunk
 
     def _finish_lines(self, turn_id: str) -> None:
         ms = self._stamps[turn_id].as_ms()
-        self.lines = self.lines[:2] + [f"state {ms['state']} ms (incl. ASR)  first token {ms['first_token']} ms  done {ms['done']} ms"]
+        self.lines = self.lines[:2] + [f"state {ms['state']} ms (ASR {ms.get('asr')} ms)  "
+                                       f"first token {ms['first_token']} ms  done {ms['done']} ms"]
+
+    def face_label(self) -> str:
+        from meld_emotion.inference.overlay import face_label_for
+        return face_label_for(len(self.tp.last_track_ids), self.tp.last_provisional, self.face_threshold)
 
     def close(self) -> None:
         if self.worker is not None:

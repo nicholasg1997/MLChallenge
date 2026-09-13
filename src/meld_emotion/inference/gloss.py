@@ -41,9 +41,26 @@ def scene_gloss(mean_scene_embedding, bank_embeddings: torch.Tensor, margin: flo
     return [SCENE_PROMPT_BANK[i] for i in top2.indices.tolist()]
 
 
-def face_gloss(faces_seen: int, vision_only_expression: dict | None) -> str:
+FACE_READING_THRESHOLD = 0.25   # a non-neutral emotion is "read" once its faces-only probability clears this
+
+
+def face_reading(vision_only_expression: dict | None, threshold: float = FACE_READING_THRESHOLD) -> tuple[str, float]:
+    """The faces-only state as one label: the top non-neutral emotion when it
+    clears `threshold`, else neutral. The faces-only distribution is
+    prior-heavy on MELD (neutral 0.4-0.6 almost always; masked vision-only
+    wF1 0.27), so the argmax is uninformative and the signal is whether any
+    other emotion has risen above the noise floor -- on a live face, a relaxed
+    expression reads joy 0.11-0.21 and a deliberate smile 0.25-0.40."""
+    if not vision_only_expression:
+        return "neutral", 0.0
+    label, prob = max(((k, v) for k, v in vision_only_expression.items() if k != "neutral"), key=lambda kv: kv[1])
+    if prob >= threshold:
+        return label, prob
+    return "neutral", vision_only_expression.get("neutral", 0.0)
+
+
+def face_gloss(faces_seen: int, vision_only_expression: dict | None, threshold: float = FACE_READING_THRESHOLD) -> str:
     if faces_seen <= 0 or not vision_only_expression:
         return "no faces visible"
-    top = sorted(vision_only_expression.items(), key=lambda kv: kv[1], reverse=True)[:2]
-    reading = " or ".join(f"{label} ({p:.0%})" for label, p in top)
-    return f"{faces_seen} face{'s' if faces_seen != 1 else ''} visible, reading {reading}"
+    label, prob = face_reading(vision_only_expression, threshold)
+    return f"{faces_seen} face{'s' if faces_seen != 1 else ''} visible, reading {label} ({prob:.0%})"

@@ -139,15 +139,48 @@ def test_response_streams_from_the_worker_into_the_caption_and_context_feeds_the
         session.close()
 
 
-def test_push_to_talk_collects_audio_between_toggles():
-    session, events = _session(texts=("ptt line",))
+def test_push_to_talk_collects_audio_between_toggles_and_never_runs_the_vad():
+    # every frame "voiced": in VAD mode this would open and close turns on its own
+    session, events = _session(texts=("ptt line",), flags=[True] * 50, push_to_talk=True)
+    assert session.status == "space to talk"
+    for _ in range(6):
+        assert session.on_audio(_pcm()) is None          # idle: audio is dropped, no VAD turn starts
+    assert session.tp.turn_id == "live001" and session.status == "space to talk"
     assert session.toggle_push_to_talk() is None
-    assert session.status == "speaking"
+    assert session.status == "recording (space to send)"
     for _ in range(5):
         assert session.on_audio(_pcm()) is None
     final = session.toggle_push_to_talk()
     assert final["text"] == "ptt line"
     assert session.transcriber.calls == [5 * 480]
+    assert session.status == "space to talk"
+
+
+def test_empty_transcript_drops_that_windows_faces():
+    flags = [True, True, False, False]
+    session, events = _session(texts=("",), flags=flags)
+    session.on_audio(_pcm()); session.on_audio(_pcm())       # speech start
+    session.on_frame(_fake_frame(), now=0.0)                  # a face seen during the (silent) turn
+    assert session.tp.max_faces_seen == 1
+    session.on_audio(_pcm()); session.on_audio(_pcm())       # end: ASR hears nothing
+    assert session.tp.max_faces_seen == 0 and session.tp.turn_id == "live001"
+
+
+def test_done_event_carries_the_asr_split_and_the_caption_shows_it():
+    flags = [True, True, False, False]
+    session, events = _session(texts=("hello",), flags=flags)
+    for _ in flags:
+        session.on_audio(_pcm())
+    done = [e for e in events.events if e["phase"] == "done"][0]
+    assert 0 <= done["latency_ms"]["asr"] <= done["latency_ms"]["state"]
+    assert session.lines[2].startswith("state ") and "(ASR " in session.lines[2]
+
+
+def test_face_label_follows_the_threshold():
+    session, _ = _session(face_threshold=0.0)
+    assert session.face_label() == "face: none"
+    session.on_frame(_fake_frame(), now=0.0)
+    assert session.face_label().startswith("face: ") and "none" not in session.face_label()
 
 
 def test_warm_up_touches_every_model_and_emits_nothing():

@@ -62,9 +62,13 @@ class LatencyStamps:
     state_emitted: float | None = None
     first_token_emitted: float | None = None
     done_emitted: float | None = None
+    asr_done: float | None = None          # live path only: when the transcript was ready (state includes it)
 
     def as_ms(self) -> dict:
         def delta(stamp):
             return None if stamp is None else round((stamp - self.turn_start) * 1000)
-        return {"state": delta(self.state_emitted), "first_token": delta(self.first_token_emitted),
-                "done": delta(self.done_emitted)}
+        out = {"state": delta(self.state_emitted), "first_token": delta(self.first_token_emitted),
+               "done": delta(self.done_emitted)}
+        if self.asr_done is not None:
+            out["asr"] = delta(self.asr_done)
+        return out
