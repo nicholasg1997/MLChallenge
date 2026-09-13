@@ -4,7 +4,7 @@ inference bundle (text encoder + fusion, face ViT, CLIP both towers) plus
 YuNet's fixed 75K and the chosen response LM's count from its HF config.
 
 Usage:
-    uv run python scripts/param_budget.py --model-repo <chosen from results/lm_selection.json>
+    uv run python -m scripts.param_budget --model-repo <chosen from results/lm_selection.json>
 """
 import argparse
 import json
