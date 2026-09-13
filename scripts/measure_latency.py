@@ -12,30 +12,15 @@ import time
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 from meld_emotion.config import REPO_ROOT, split_video_dir
 from meld_emotion.data.preprocess import sample_frame_indices
 from meld_emotion.data.video_index import build_video_index
 from meld_emotion.inference.events import EventEmitter
-from meld_emotion.inference.loader import load_inference_bundle
+from meld_emotion.inference.latency import percentile, summarise_latencies   # noqa: F401 (re-exported)
+from meld_emotion.inference.loader import DEFAULT_CHECKPOINT, load_inference_bundle
 from meld_emotion.inference.turn import TurnProcessor
-from scripts.replay_demo import DEFAULT_CHECKPOINT, warm_up
-
-
-def percentile(values: list[float], p: float) -> float | None:
-    if not values:
-        return None
-    return float(np.percentile(values, p))
-
-
-def summarise_latencies(done_events: list[dict]) -> dict:
-    out = {}
-    for key in ("state", "first_token", "done"):
-        values = [e["latency_ms"][key] for e in done_events if e["latency_ms"].get(key) is not None]
-        out[f"{key}_p50"] = percentile(values, 50) if values else None
-        out[f"{key}_p95"] = percentile(values, 95) if values else None
-    return out
+from scripts.replay_demo import warm_up
 
 
 def time_one_frame(tp: TurnProcessor, frame_bgr) -> float:

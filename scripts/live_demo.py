@@ -30,14 +30,13 @@ from meld_emotion.inference.asr import DEFAULT_ASR_MODEL, Transcriber
 from meld_emotion.inference.audio import EndpointDetector, build_vad
 from meld_emotion.inference.events import EventEmitter
 from meld_emotion.inference.gloss import build_clip_tokenizer, embed_prompt_bank
+from meld_emotion.inference.latency import percentile, summarise_latencies
 from meld_emotion.inference.live import LiveSession, warm_up
-from meld_emotion.inference.loader import load_inference_bundle
+from meld_emotion.inference.loader import DEFAULT_CHECKPOINT, load_inference_bundle
 from meld_emotion.inference.overlay import draw_overlay
 from meld_emotion.inference.responder import Responder
 from meld_emotion.inference.sources import CameraSource, FileSource
 from meld_emotion.training.train import peak_memory_mb
-from scripts.measure_latency import percentile, summarise_latencies
-from scripts.replay_demo import DEFAULT_CHECKPOINT
 
 WINDOW = "Live demo  (q=quit, space=push-to-talk)"
 LM_SELECTION = REPO_ROOT / "results" / "lm_selection.json"

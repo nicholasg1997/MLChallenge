@@ -33,7 +33,7 @@ from meld_emotion.data.manifest import read_manifest
 from meld_emotion.data.video_index import build_video_index
 from meld_emotion.inference.events import EventEmitter
 from meld_emotion.inference.gloss import build_clip_tokenizer, embed_prompt_bank
-from meld_emotion.inference.loader import load_inference_bundle
+from meld_emotion.inference.loader import DEFAULT_CHECKPOINT, load_inference_bundle
 from meld_emotion.inference.responder import Responder
 from meld_emotion.training.config import TrainConfig
 from meld_emotion.training.crops import MeldCropDataset, collate_crops
@@ -41,7 +41,7 @@ from meld_emotion.training.dataset import MeldFeatureDataset, collate, infer_fea
 from meld_emotion.training.model import FusionModel
 from meld_emotion.training.text import build_text_encoder, build_tokenizer, encode_text
 from meld_emotion.training.train import evaluate, resolve_device
-from scripts.replay_demo import DEFAULT_CHECKPOINT, run_one_clip
+from scripts.replay_demo import run_one_clip
 
 MAX_ABS_DIFF = 0.02
 

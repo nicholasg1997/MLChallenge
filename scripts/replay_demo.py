@@ -20,13 +20,11 @@ from meld_emotion.data.preprocess import MAX_DECODE_SECONDS, sample_frame_indice
 from meld_emotion.data.video_index import build_video_index
 from meld_emotion.inference.events import EventEmitter, LatencyStamps
 from meld_emotion.inference.gloss import build_clip_tokenizer, embed_prompt_bank, face_gloss, scene_gloss
-from meld_emotion.inference.loader import load_inference_bundle
+from meld_emotion.inference.loader import DEFAULT_CHECKPOINT, load_inference_bundle
 from meld_emotion.inference.overlay import draw_overlay
 from meld_emotion.inference.responder import Responder, build_prompt
 from meld_emotion.inference.turn import TurnProcessor
 
-DEFAULT_CHECKPOINT = REPO_ROOT / "results" / "stage2_fusion_faces_only" / "seed1" / "best.pt"
-DEFAULT_PREDICTIONS = DEFAULT_CHECKPOINT.parent / "test_predictions.jsonl"
 WINDOW = "Replay demo  (q=quit)"
 
 

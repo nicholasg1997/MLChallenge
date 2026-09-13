@@ -10,12 +10,18 @@ from pathlib import Path
 
 import torch
 
+from meld_emotion.config import REPO_ROOT
 from meld_emotion.training.config import TrainConfig
 from meld_emotion.training.model import FusionModel
 from meld_emotion.training.text import build_text_encoder, build_tokenizer
 from meld_emotion.training.train import resolve_device
 from meld_emotion.vision.encoders import FaceEmotionEncoder, SceneEncoder
 from meld_emotion.vision.face_detector import build_face_detector
+
+
+# The submitted model (docs/results/stage1_ablations.md) and its batch-path test predictions.
+DEFAULT_CHECKPOINT = REPO_ROOT / "results" / "stage2_fusion_faces_only" / "seed1" / "best.pt"
+DEFAULT_PREDICTIONS = DEFAULT_CHECKPOINT.parent / "test_predictions.jsonl"
 
 
 @dataclass

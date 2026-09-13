@@ -13,9 +13,8 @@ from pathlib import Path
 from transformers import AutoConfig
 
 from meld_emotion.config import REPO_ROOT
-from meld_emotion.inference.loader import load_inference_bundle
+from meld_emotion.inference.loader import DEFAULT_CHECKPOINT, load_inference_bundle
 from meld_emotion.training.text import count_parameters
-from scripts.replay_demo import DEFAULT_CHECKPOINT
 
 FACE_DETECTOR_PARAMS = 75_000   # YuNet 2023mar (232 KB ONNX)
 
