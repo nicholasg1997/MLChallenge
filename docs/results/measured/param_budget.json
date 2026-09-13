@@ -1,0 +1,11 @@
+{
+  "model_repo": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+  "lm_params": 3085697024,
+  "text_and_fusion": 135725834,
+  "face_encoder": 85804039,
+  "face_reader": 85804039,
+  "scene_encoder": 151277313,
+  "face_detector": 75000,
+  "total": 3544383249,
+  "stage": 2
+}

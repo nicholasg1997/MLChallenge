@@ -1,0 +1,41 @@
+{
+  "candidates": [
+    {
+      "repo": "mlx-community/Qwen3-4B-4bit",
+      "first_token_s": 1.709,
+      "done_s": 2.747,
+      "n_tokens": 25,
+      "n_runs": 3,
+      "meets_target": false
+    },
+    {
+      "repo": "mlx-community/Phi-3.5-mini-instruct-4bit",
+      "first_token_s": 1.201,
+      "done_s": 2.8,
+      "n_tokens": 40,
+      "n_runs": 3,
+      "meets_target": false
+    },
+    {
+      "repo": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+      "first_token_s": 0.903,
+      "done_s": 1.354,
+      "n_tokens": 14,
+      "n_runs": 3,
+      "meets_target": true
+    },
+    {
+      "repo": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+      "first_token_s": 0.487,
+      "done_s": 0.766,
+      "n_tokens": 16,
+      "n_runs": 3,
+      "meets_target": true
+    }
+  ],
+  "chosen": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+  "targets": {
+    "first_token_s": 1.0,
+    "done_s": 2.5
+  }
+}

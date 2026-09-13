@@ -12,3 +12,4 @@ __pycache__/
 
 # Training outputs (checkpoints, logs, results.json) -- reproducible via scripts/train_meld.py
 /results/
+.DS_Store

@@ -1,0 +1,58 @@
+{
+  "batch_source": "local batch path (fp32)",
+  "device": "mps",
+  "tolerance": 0.02,
+  "passed": true,
+  "clips": [
+    {
+      "clip": "dia168_utt11",
+      "argmax_match": true,
+      "max_abs_diff": 0.0008277334272861481
+    },
+    {
+      "clip": "dia153_utt4",
+      "argmax_match": true,
+      "max_abs_diff": 0.0011140704154968262
+    },
+    {
+      "clip": "dia96_utt11",
+      "argmax_match": true,
+      "max_abs_diff": 0.00047391653060913086
+    },
+    {
+      "clip": "dia261_utt0",
+      "argmax_match": true,
+      "max_abs_diff": 0.00013130903244018555
+    },
+    {
+      "clip": "dia167_utt6",
+      "argmax_match": true,
+      "max_abs_diff": 0.002289116382598877
+    },
+    {
+      "clip": "dia65_utt3",
+      "argmax_match": true,
+      "max_abs_diff": 0.002185255289077759
+    },
+    {
+      "clip": "dia124_utt12",
+      "argmax_match": true,
+      "max_abs_diff": 0.017628014087677002
+    },
+    {
+      "clip": "dia128_utt0",
+      "argmax_match": true,
+      "max_abs_diff": 2.9802322387695312e-08
+    },
+    {
+      "clip": "dia125_utt22",
+      "argmax_match": true,
+      "max_abs_diff": 0.0014616847038269043
+    },
+    {
+      "clip": "dia90_utt1",
+      "argmax_match": true,
+      "max_abs_diff": 0.00043059512972831726
+    }
+  ]
+}

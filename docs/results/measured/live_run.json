@@ -1,0 +1,23 @@
+{
+  "state_p50": null,
+  "state_p95": null,
+  "first_token_p50": null,
+  "first_token_p95": null,
+  "done_p50": null,
+  "done_p95": null,
+  "asr_p50_ms": null,
+  "asr_p95_ms": null,
+  "vision_per_frame_p50_ms": 180.19104201812297,
+  "vision_per_frame_p95_ms": 187.6310005027335,
+  "n_turns": 0,
+  "n_frames": 271,
+  "device": "mps",
+  "model_repo": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+  "asr_model": "openai/whisper-small.en",
+  "asr_backend": "mlx",
+  "asr_params": 240582182,
+  "peak_rss_mb": 1846.71875,
+  "peak_mlx_mb": 2822.528371810913,
+  "face_reader": "head",
+  "face_reader_params": 85804039
+}

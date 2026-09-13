@@ -1,0 +1,12 @@
+{
+  "state_p50": 42.0,
+  "state_p95": 54.70000000000001,
+  "first_token_p50": 899.0,
+  "first_token_p95": 1114.05,
+  "done_p50": 1579.0,
+  "done_p95": 1857.9,
+  "vision_per_frame_p50_ms": 134.43995799752884,
+  "vision_per_frame_p95_ms": 535.4851078183849,
+  "n_turns": 20,
+  "n_frames": 145
+}
