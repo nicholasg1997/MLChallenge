@@ -7,7 +7,11 @@ crops, replay encodes in-memory crops -- so this asserts argmax equality
 and a small probability tolerance, not bitwise equality.
 
 Usage:
-    uv run python scripts/consistency_check.py --clips results/demo_clips.json --model-repo <chosen LM>
+    uv run python -m scripts.consistency_check --clips results/demo_clips.json
+
+`--model-repo` is optional -- this check only reads `final_event
+["emotion_probs"]`, never the LM's response, so it runs correctness-only
+without loading any LM unless a repo is explicitly given.
 """
 import argparse
 import json
@@ -48,25 +52,28 @@ def main():
     parser.add_argument("--clips", type=Path, default=REPO_ROOT / "results" / "demo_clips.json")
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--predictions", type=Path, default=DEFAULT_PREDICTIONS)
-    parser.add_argument("--model-repo", required=True)
+    parser.add_argument("--model-repo", default=None,
+                        help="optional -- this check only reads final_event['emotion_probs'], never the LM's "
+                             "response, so it runs without loading any LM unless a repo is given")
     args = parser.parse_args()
 
     clip_ids = json.loads(args.clips.read_text())
     bundle = load_inference_bundle(args.checkpoint)
     bank_embeddings = embed_prompt_bank(bundle.scene_encoder.model, build_clip_tokenizer(), bundle.device)
-    responder = Responder(model_repo=args.model_repo)
+    responder = Responder(model_repo=args.model_repo) if args.model_repo else None
     rows_by_clip = {f"dia{r['dialogue_id']}_utt{r['utterance_id']}": r
                     for r in read_manifest(FEATURE_CACHE_DIR / "test" / "manifest.jsonl")}
     index = build_video_index(split_video_dir("test"))
-    emitter = EventEmitter(open(REPO_ROOT / "results" / "consistency_events.jsonl", "w"))
 
     results = []
-    for clip_id in clip_ids:
-        row = rows_by_clip[clip_id]
-        batch = batch_predict_one(args.predictions, clip_id)
-        final_event, _ = run_one_clip(bundle, responder, bank_embeddings, index[(row["dialogue_id"], row["utterance_id"])],
-                                      row, emitter, show_window=False)
-        results.append({"clip": clip_id, **compare(batch["emotion_probs"], final_event["emotion_probs"])})
+    with open(REPO_ROOT / "results" / "consistency_events.jsonl", "w") as f:
+        emitter = EventEmitter(f)
+        for clip_id in clip_ids:
+            row = rows_by_clip[clip_id]
+            batch = batch_predict_one(args.predictions, clip_id)
+            final_event, _, _ = run_one_clip(bundle, bank_embeddings, index[(row["dialogue_id"], row["utterance_id"])],
+                                             row, emitter, responder=responder, show_window=False)
+            results.append({"clip": clip_id, **compare(batch["emotion_probs"], final_event["emotion_probs"])})
     passed = all(r["argmax_match"] and r["max_abs_diff"] < MAX_ABS_DIFF for r in results)
     Path(REPO_ROOT / "results" / "consistency_check.json").write_text(json.dumps(results, indent=2))
     print(f"{'PASS' if passed else 'FAIL'}: {sum(r['argmax_match'] for r in results)}/{len(results)} argmax matches; "
